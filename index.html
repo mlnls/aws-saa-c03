@@ -45,23 +45,62 @@
 <main>
   <div id="notice" class="notice" hidden></div>
 
-  <!-- 시험 선택 화면 -->
+  <!-- 세트 선택 화면 -->
   <section id="home" hidden>
     <div class="home-head">
       <h2>어느 세트를 풀까요?</h2>
-      <p>세트를 고르면 그 안의 문제만 풀립니다.</p>
+      <p>세트를 고르면 진행 상황과 같이 푸는 사람들을 먼저 볼 수 있어요.</p>
     </div>
     <div class="exams" id="exams"></div>
-    <div class="board-wrap" id="boardWrap" hidden>
-      <h3>같이 푸는 사람들</h3>
-      <table class="board"><tbody id="boardBody"></tbody></table>
+    <div class="panel" id="homeTagsWrap" hidden>
+      <div class="panel-head">
+        <h3>분류별 성적</h3>
+        <span class="muted">푼 문제 기준 · 약한 분류가 위로</span>
+      </div>
+      <div id="homeTags"></div>
+    </div>
+  </section>
+
+  <!-- 세트 상세 (시작 전 화면) -->
+  <section id="detail" hidden>
+    <div class="crumb">
+      <a href="#/" class="backlink">← 세트 목록</a>
+      <h2 id="dTitle"></h2>
+      <span class="badge" id="dNote"></span>
+    </div>
+
+    <div class="panel">
+      <div class="progress-big">
+        <div class="pb-num"><b id="dSolved">0</b><span id="dTotal">/ 0</span></div>
+        <div class="pb-body">
+          <div class="bar big"><span id="dBar" style="width:0%"></span></div>
+          <p class="ec-meta" id="dMeta"></p>
+        </div>
+      </div>
+      <div class="start-actions" id="dActions"></div>
+    </div>
+
+    <div class="panel" id="dBoardWrap" hidden>
+      <div class="panel-head">
+        <h3>같이 푸는 사람들</h3>
+        <span class="muted" id="dBoardNote"></span>
+      </div>
+      <table class="board"><tbody id="dBoardBody"></tbody></table>
+    </div>
+
+    <div class="panel" id="dTagsWrap" hidden>
+      <div class="panel-head">
+        <h3>분류별 성적</h3>
+        <span class="muted">이 세트에서 푼 문제 기준</span>
+      </div>
+      <div id="dTags"></div>
     </div>
   </section>
 
   <!-- 문제 화면 (한 번에 한 문제) -->
   <section id="exam" hidden>
     <div class="crumb">
-      <a href="#/" class="backlink">← 세트 목록</a>
+      <a href="#/" class="backlink" id="solveBack">← 세트 목록</a>
       <h2 id="examTitle"></h2>
       <span class="badge" id="examNote"></span>
     </div>

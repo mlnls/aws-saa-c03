@@ -103,38 +103,22 @@ begin
         bookmarked = excluded.bookmarked, updated_at = now();
 end $$;
 
--- 같이 푸는 사람들 현황 (닉네임 + 푼 개수 + 정답 수). PIN·토큰은 노출되지 않음.
-create or replace function public.saa_board()
-returns table (nickname text, solved bigint, correct bigint) language sql security definer set search_path = public as $$
+-- 같이 푸는 사람들 현황: 닉네임 × 세트별 푼 개수·정답 수.
+-- qid 가 "exam1-12" 형태이므로 첫 '-' 앞부분을 세트 id 로 사용한다.
+-- (세트 id 에는 '-' 를 쓰지 마세요.)  PIN·토큰은 절대 노출되지 않는다.
+drop function if exists public.saa_board();
+create function public.saa_board()
+returns table (nickname text, exam text, solved bigint, correct bigint)
+language sql security definer set search_path = public as $$
   select u.nickname,
-         count(a.qid) filter (where a.correct is not null) as solved,
-         count(a.qid) filter (where a.correct) as correct
+         split_part(a.qid, '-', 1) as exam,
+         count(*) filter (where a.correct is not null) as solved,
+         count(*) filter (where a.correct) as correct
   from public.saa_users u
-  left join public.saa_attempts a on a.user_id = u.id
-  group by u.nickname
-  order by 3 desc, 2 desc;
+  join public.saa_attempts a on a.user_id = u.id
+  group by u.nickname, split_part(a.qid, '-', 1)
+  order by 1, 2;
 $$;
-
--- 내 기록 전체 초기화
-create or replace function public.saa_reset(p_token uuid)
-returns void language plpgsql security definer set search_path = public as $$
-declare uid uuid;
-begin
-  select id into uid from public.saa_users where token = p_token;
-  if uid is null then raise exception 'BAD_TOKEN'; end if;
-  delete from public.saa_attempts where user_id = uid;
-end $$;
-
--- 계정 삭제 (기록까지 함께 삭제, PIN 재확인)
-create or replace function public.saa_delete_me(p_token uuid, p_pin text)
-returns void language plpgsql security definer set search_path = public, extensions as $$
-declare v public.saa_users;
-begin
-  select * into v from public.saa_users where token = p_token;
-  if v.id is null then raise exception 'BAD_TOKEN'; end if;
-  if v.pin_hash <> extensions.crypt(p_pin, v.pin_hash) then raise exception 'BAD_PIN'; end if;
-  delete from public.saa_users where id = v.id;
-end $$;
 
 grant execute on function
   public.saa_signup(text, text),
