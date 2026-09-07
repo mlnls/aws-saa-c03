@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AWS SAA-C03 문제 모음</title>
+<meta name="description" content="AWS Certified Solutions Architect – Associate (SAA-C03) 문제 모음 및 오답 노트">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>☁️</text></svg>">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<header class="top">
+  <div class="top-row">
+    <div class="brand">
+      <span class="cloud">☁️</span>
+      <div>
+        <h1>AWS SAA-C03</h1>
+        <p class="sub">문제 모음 · 오답 노트</p>
+      </div>
+    </div>
+    <div class="top-actions">
+      <div class="seg" id="langSeg" role="group" aria-label="언어">
+        <button data-lang="en" class="on">EN</button>
+        <button data-lang="ko">한글</button>
+      </div>
+      <button id="themeBtn" class="ghost" title="테마 전환">🌗</button>
+      <button id="authBtn" class="primary">로그인</button>
+    </div>
+  </div>
+
+  <div class="stats" id="stats"></div>
+
+  <div class="controls">
+    <div class="seg wrap" id="filterSeg" role="group" aria-label="필터">
+      <button data-filter="all" class="on">전체</button>
+      <button data-filter="unanswered">안 푼 문제</button>
+      <button data-filter="wrong">틀린 문제</button>
+      <button data-filter="bookmark">북마크</button>
+    </div>
+    <select id="tagSel" aria-label="태그"><option value="">모든 태그</option></select>
+    <input id="search" type="search" placeholder="문제 검색 (예: S3, #12)" aria-label="검색">
+  </div>
+</header>
+
+<main>
+  <div id="notice" class="notice" hidden></div>
+  <div id="list" class="list"></div>
+  <div id="empty" class="empty" hidden>조건에 맞는 문제가 없어요.</div>
+</main>
+
+<footer class="foot">
+  <span id="modeTag"></span>
+  <span>문제 추가는 <code>data/questions.js</code> · <a href="https://github.com/mlnls/aws-saa-c03" target="_blank" rel="noopener">repo</a></span>
+</footer>
+
+<dialog id="authDlg">
+  <form id="authForm" method="dialog">
+    <h2>닉네임으로 시작하기</h2>
+    <p class="hint">기록(정답·오답·북마크)을 닉네임에 저장합니다. 이메일은 필요 없어요.</p>
+    <label>닉네임
+      <input id="nick" name="nick" required minlength="2" maxlength="20" autocomplete="username" placeholder="mini">
+    </label>
+    <label>PIN (숫자 6자리 이상)
+      <input id="pin" name="pin" required minlength="6" maxlength="32" inputmode="numeric" autocomplete="current-password" type="password" placeholder="······">
+    </label>
+    <p class="err" id="authErr" hidden></p>
+    <div class="dlg-actions">
+      <button type="button" id="doSignUp" class="ghost">처음이에요 (가입)</button>
+      <button type="button" id="doSignIn" class="primary">로그인</button>
+    </div>
+    <button type="button" class="close" id="authClose" aria-label="닫기">✕</button>
+  </form>
+</dialog>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script src="assets/config.js"></script>
+<script src="data/questions.js"></script>
+<script src="assets/store.js"></script>
+<script src="assets/app.js"></script>
+</body>
+</html>
