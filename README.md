@@ -42,14 +42,20 @@ supabase/schema.sql Supabase 테이블 + RLS
 
 ## Supabase 연동 (닉네임 + PIN 로그인)
 
-1. [supabase.com](https://supabase.com) 무료 프로젝트 생성
-2. **SQL Editor** 에 `supabase/schema.sql` 붙여넣고 Run
-3. **Authentication → Sign In / Providers → Email** 에서 `Confirm email` **OFF**
-4. **Project Settings → API** 의 `Project URL` 과 `anon public` 키를 `assets/config.js` 에 입력
-5. 커밋 & 푸시
+Supabase Auth 를 쓰지 않습니다. `supabase/schema.sql` 이 만드는 DB 함수
+(`saa_signup` / `saa_login` / `saa_records` / `saa_save`)가 닉네임 + PIN(bcrypt)을
+직접 검증하므로, 대시보드의 Auth 설정(이메일 확인 등)은 건드릴 필요가 없습니다.
 
-> anon key 는 공개용 키라서 저장소에 올려도 됩니다. RLS 정책이 남의 기록 접근을 막습니다.
-> 로그인은 `닉네임@saa-c03.local` 형태의 가상 이메일 + PIN(비밀번호 6자 이상)으로 처리됩니다.
+1. [supabase.com](https://supabase.com) 무료 프로젝트 생성
+2. **SQL Editor** → New query → `supabase/schema.sql` 전체 붙여넣고 **Run**
+3. **Settings → Data API** 의 `Project URL`, **Settings → API Keys** 의 `Publishable key`
+   를 `assets/config.js` 에 입력
+4. 커밋 & 푸시
+
+> publishable key 는 공개용이라 저장소에 올려도 됩니다.
+> 테이블은 RLS 만 켜고 정책을 두지 않아, 이 키로는 테이블에 직접 접근할 수 없습니다.
+> 모든 읽기·쓰기는 위 함수(security definer)를 통해서만 일어나고, 토큰 없이는 남의 기록을 볼 수 없습니다.
+> PIN 은 bcrypt 해시로만 저장되고, 10회 연속 틀리면 10분 잠깁니다.
 
 키를 넣기 전에는 "이 브라우저에만 저장" 폴백 모드로 동작합니다.
 
