@@ -127,6 +127,50 @@ Supabase Auth 를 쓰지 않습니다. `supabase/schema.sql` 이 만드는 DB �
 `main` 에 push 하면 자동 배포됩니다. 처음 한 번만 저장소 **Settings → Pages → Source: GitHub Actions** 로 바꿔 주세요.
 배포 전에 문제 데이터를 검사해서 **문법 오류·중복 id·정답 키 불일치가 있으면 배포를 막습니다.**
 
+### S3 정적 웹사이트 호스팅만으로 열기
+
+CloudFront 없이 S3 하나로 공개할 때의 설정입니다.
+
+1. **버킷 생성** — 리전은 아무 곳이나(예: `ap-northeast-2`). Object Ownership 은 기본값
+   `ACLs disabled (Bucket owner enforced)` 그대로 둡니다. (ACL 대신 버킷 정책으로 공개)
+2. **Block Public Access 해제** — 버킷 → Permissions → *Block public access (bucket settings)* → Edit →
+   **네 항목 모두 해제** → Save (`confirm` 입력). 버킷 정책으로 공개하려면 필요합니다.
+3. **버킷 정책** — Permissions → *Bucket policy* → `aws/bucket-policy.json` 내용을 붙여넣고
+   `BUCKET_NAME` 을 실제 버킷 이름으로 바꿉니다.
+   ```json
+   { "Version": "2012-10-17", "Statement": [{
+       "Sid": "PublicReadGetObject", "Effect": "Allow", "Principal": "*",
+       "Action": "s3:GetObject", "Resource": "arn:aws:s3:::BUCKET_NAME/*" }] }
+   ```
+4. **정적 웹사이트 호스팅 활성화** — Properties → *Static website hosting* → Enable
+   - Index document: `index.html`
+   - Error document: `index.html`
+5. **파일 업로드** — 아래 6개만 올립니다(폴더 구조 유지).
+   ```
+   index.html
+   assets/config.js  assets/store.js  assets/app.js  assets/style.css
+   data/exam1.js
+   ```
+   ```bash
+   aws s3 sync . s3://BUCKET_NAME --delete \
+     --exclude ".*" --exclude ".git/*" --exclude ".github/*" \
+     --exclude "supabase/*" --exclude "aws/*" --exclude "README.md" \
+     --exclude "index.html" --exclude "data/*" \
+     --cache-control "public,max-age=86400"
+   aws s3 cp index.html s3://BUCKET_NAME/index.html --cache-control "no-cache"
+   aws s3 sync data s3://BUCKET_NAME/data --delete --cache-control "no-cache"
+   ```
+6. **접속** — Properties 의 *Bucket website endpoint*
+   (`http://BUCKET_NAME.s3-website.ap-northeast-2.amazonaws.com`)
+
+> 주의할 점
+> - 웹사이트 엔드포인트는 **HTTP 전용**입니다. 페이지가 HTTP 라도 Supabase(HTTPS) 호출은 정상 동작합니다
+>   (차단되는 건 HTTPS 페이지 → HTTP 요청 방향). 자물쇠가 필요하면 CloudFront + OAC 를 앞에 두세요.
+> - `s3://BUCKET/x` 같은 REST 엔드포인트(`BUCKET.s3.ap-northeast-2.amazonaws.com`)로 열면
+>   Index document 가 적용되지 않습니다. 반드시 **website endpoint** 로 접속하세요.
+> - 이 구성은 버킷을 전체 공개로 만듭니다. 올린 파일(문제·해설·publishable key)은 모두 공개되어도
+>   되는 것들이지만, 같은 버킷에 다른 파일을 두지 마세요.
+
 ### S3 + CloudFront (선택, `.github/workflows/s3.yml`)
 
 Actions 탭에서 수동 실행(`Run workflow`)합니다. 먼저 저장소에 값을 넣어 주세요.
