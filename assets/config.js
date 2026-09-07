@@ -7,6 +7,6 @@
  *           ※ 예전 프로젝트라면 "Legacy anon, service_role API keys" 탭의 anon key도 동작합니다.
  */
 window.SAA_CONFIG = {
-  url: "",      // 예: https://abcdefghijkl.supabase.co
-  anonKey: ""   // 예: sb_publishable_xxxxxxxx  (공개해도 되는 키)
+  url: "https://gveubjxyhfktzweclfym.supabase.co",
+  anonKey: "sb_publishable_gIFczpPH_c4P7wBB1uwhGw_rlaKhiH6"
 };
