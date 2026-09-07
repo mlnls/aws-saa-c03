@@ -86,7 +86,42 @@ Supabase Auth 를 쓰지 않습니다. `supabase/schema.sql` 이 만드는 DB �
 
 키를 넣기 전에는 "이 브라우저에만 저장" 폴백 모드로 동작합니다.
 
-## 배포 (GitHub Pages)
+## 풀이 방식
+
+- **한 화면에 한 문제**만 나옵니다. 위쪽 번호 스트립으로 아무 문제나 바로 이동할 수 있고,
+  번호 색이 정답(초록)·오답(빨강)·미풀이(회색)를 나타냅니다.
+- 선택지를 누르면 **선택만** 되고 채점되지 않습니다. **확인**을 눌러야 채점됩니다. (선택은 자유롭게 변경 가능)
+- 채점 결과는 **맞았다 / 틀렸다만** 알려주고 **정답과 해설은 가려 둡니다.**
+  보고 싶을 때 `정답·해설 보기` 를 누르면 펼쳐집니다. → 나중에 오답만 다시 풀 때 정답이 기억나버리는 걸 막습니다.
+- 키보드: `A`~`D` 또는 `1`~`4` 선택, `Enter` 확인(채점 후엔 다음 문제), `←` `→` 이동
+- 마지막으로 보던 문제 번호는 세트별로 기억되어 다시 들어오면 그 자리에서 이어집니다.
+- 필터(전체 / 안 푼 문제 / 틀린 문제 / 북마크)는 **풀이 대상 목록**을 정합니다.
+  필터를 건 뒤 문제를 풀어도 목록에서 즉시 사라지지 않아 흐름이 끊기지 않습니다.
+
+## 배포
+
+### GitHub Pages (기본, `.github/workflows/pages.yml`)
+
+`main` 에 push 하면 자동 배포됩니다. 처음 한 번만 저장소 **Settings → Pages → Source: GitHub Actions** 로 바꿔 주세요.
+배포 전에 문제 데이터를 검사해서 **문법 오류·중복 id·정답 키 불일치가 있으면 배포를 막습니다.**
+
+### S3 + CloudFront (선택, `.github/workflows/s3.yml`)
+
+Actions 탭에서 수동 실행(`Run workflow`)합니다. 먼저 저장소에 값을 넣어 주세요.
+
+| 종류 | 이름 | 예시 |
+| --- | --- | --- |
+| Variables | `AWS_REGION` | `ap-northeast-2` |
+| Variables | `S3_BUCKET` | `saa-c03-quiz` |
+| Variables | `CLOUDFRONT_ID` | CloudFront 안 쓰면 비워 두기 |
+| Secrets | `AWS_ROLE_ARN` | GitHub OIDC 를 신뢰하는 IAM 역할 ARN |
+
+`index.html` 과 `data/` 는 `no-cache`, 나머지 정적 자원은 1일 캐시로 올리고, CloudFront ID 가 있으면 무효화까지 수행합니다.
+문제를 추가해도 캐시 때문에 안 보이는 상황이 생기지 않습니다.
+
+> S3 정적 웹사이트 엔드포인트는 HTTP 전용입니다. HTTPS 가 필요하면 CloudFront + OAC 를 앞에 두세요.
+
+## 그 밖의 배포 (수동)
 
 1. GitHub 저장소 → **Settings → Pages**
 2. Source: `Deploy from a branch`, Branch: `main` / `/ (root)` → Save

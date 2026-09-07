@@ -58,15 +58,18 @@
     </div>
   </section>
 
-  <!-- 문제 화면 -->
+  <!-- 문제 화면 (한 번에 한 문제) -->
   <section id="exam" hidden>
     <div class="crumb">
       <a href="#/" class="backlink">← 세트 목록</a>
       <h2 id="examTitle"></h2>
       <span class="badge" id="examNote"></span>
     </div>
+    <div class="qnav" id="qnav"></div>
     <div id="list" class="list"></div>
+    <div class="pager" id="pager"></div>
     <div id="empty" class="empty" hidden>조건에 맞는 문제가 없어요.</div>
+    <p class="keyhint">키보드: <kbd>A</kbd>~<kbd>D</kbd> 또는 <kbd>1</kbd>~<kbd>4</kbd> 선택 · <kbd>Enter</kbd> 확인/다음 · <kbd>←</kbd><kbd>→</kbd> 이동</p>
   </section>
 </main>
 

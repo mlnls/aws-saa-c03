@@ -1,0 +1,53 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # 문제 데이터가 문법적으로 깨지지 않았는지 확인 (깨지면 사이트가 빈 화면이 됨)
+      - name: Check JS syntax
+        run: |
+          for f in assets/*.js data/*.js; do node --check "$f"; done
+          node -e '
+            global.window = {};
+            require("fs").readdirSync("data").filter(f=>f.endsWith(".js")).forEach(f=>require("./data/"+f));
+            const exams = window.SAA_EXAMS || [];
+            const ids = new Set();
+            let n = 0;
+            exams.forEach(e => (e.questions||[]).forEach(q => {
+              n++;
+              if (ids.has(q.id)) throw new Error("중복 문제 id: " + q.id);
+              ids.add(q.id);
+              const keys = (q.options||[]).map(o=>o.k);
+              if (!q.answer || !q.answer.length) throw new Error("정답 없음: " + q.id);
+              q.answer.forEach(a => { if (!keys.includes(a)) throw new Error("정답 키 불일치: " + q.id); });
+              if (!q.question || !q.question.en) throw new Error("문제 원문 없음: " + q.id);
+            }));
+            console.log("OK: " + exams.length + " sets, " + n + " questions");
+          '
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: .
+      - id: deploy
+        uses: actions/deploy-pages@v4

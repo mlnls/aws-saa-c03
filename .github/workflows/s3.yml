@@ -1,0 +1,55 @@
+name: Deploy to S3 + CloudFront
+
+# GitHub Pages 대신(또는 함께) S3로 배포할 때 쓰는 워크플로.
+# Actions → 이 워크플로 → "Run workflow" 로 수동 실행합니다.
+#
+# 준비물 (Settings → Secrets and variables → Actions):
+#   변수(Variables)  AWS_REGION        예: ap-northeast-2
+#                    S3_BUCKET         예: saa-c03-quiz
+#                    CLOUDFRONT_ID     (CloudFront 안 쓰면 비워 두기)
+#   시크릿(Secrets)  AWS_ROLE_ARN      GitHub OIDC 를 신뢰하는 IAM 역할 ARN
+#                                      (액세스 키를 저장하지 않는 권장 방식)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Guard
+        run: |
+          if [ -z "${{ vars.S3_BUCKET }}" ] || [ -z "${{ secrets.AWS_ROLE_ARN }}" ]; then
+            echo "S3_BUCKET 변수와 AWS_ROLE_ARN 시크릿을 먼저 설정해 주세요." >&2
+            exit 1
+          fi
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      # 오래 캐시해도 되는 정적 자원
+      - name: Sync assets
+        run: |
+          aws s3 sync . s3://${{ vars.S3_BUCKET }} --delete \
+            --exclude ".*" --exclude ".git/*" --exclude ".github/*" \
+            --exclude "supabase/*" --exclude "README.md" \
+            --exclude "index.html" --exclude "data/*" \
+            --cache-control "public,max-age=86400"
+
+      # 문제 데이터와 진입점은 캐시하지 않음 (문제 추가가 바로 반영되도록)
+      - name: Sync html and data
+        run: |
+          aws s3 cp index.html s3://${{ vars.S3_BUCKET }}/index.html --cache-control "no-cache"
+          aws s3 sync data s3://${{ vars.S3_BUCKET }}/data --delete --cache-control "no-cache"
+
+      - name: Invalidate CloudFront
+        if: ${{ vars.CLOUDFRONT_ID != '' }}
+        run: aws cloudfront create-invalidation --distribution-id ${{ vars.CLOUDFRONT_ID }} --paths "/*"
