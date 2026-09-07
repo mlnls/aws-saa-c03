@@ -46,12 +46,30 @@
   });
 
   /* ---------------- 분류(태그)별 성적 ---------------- */
+  /* ---------------- 분류(태그) 그룹 ---------------- */
+  const TAG_EXCLUDE = new Set(["Choose two"]);
+  const TAG_GROUPS = [
+    { name: "스토리지", tags: ["S3", "S3 Lifecycle", "S3 Storage Class", "S3 Versioning", "MFA Delete", "Glacier", "EBS", "EFS", "Instance Store", "Storage Gateway", "Snowball", "Snapshot", "Durability"] },
+    { name: "네트워킹 · 콘텐츠 전송", tags: ["VPC", "VPC Endpoint", "NAT Gateway", "CloudFront", "Route 53", "Global Accelerator", "Gateway Load Balancer", "Direct Connect", "NLB", "Data Transfer", "Latency", "Hybrid"] },
+    { name: "컴퓨팅", tags: ["EC2", "Auto Scaling", "Lambda", "Serverless", "Capacity Reservation", "Scaling", "Performance", "Static Website"] },
+    { name: "데이터베이스", tags: ["RDS", "Aurora", "DynamoDB"] },
+    { name: "보안 · 자격 증명", tags: ["IAM", "Security", "KMS", "Secrets Manager", "Shield Advanced", "DDoS", "Network Firewall", "Macie", "PII", "Least Privilege", "Organizations", "Active Directory", "SSO", "IAM Identity Center"] },
+    { name: "애플리케이션 통합", tags: ["SQS", "SQS FIFO", "SNS", "Decoupling", "API Gateway", "AppFlow", "SaaS"] },
+    { name: "분석", tags: ["Athena", "Analytics", "QuickSight", "Kinesis Data Streams", "Kinesis Data Firehose", "Ingestion"] },
+    { name: "관리 · 비용", tags: ["AWS Config", "CloudTrail", "CloudWatch", "Systems Manager", "Session Manager", "Run Command", "Patching", "Compliance", "Audit", "Tagging", "Cost", "Cost Explorer", "Billing", "Migration", "Multi-Region", "High Availability"] },
+  ];
+  const GROUP_OF = (() => {
+    const m = {};
+    TAG_GROUPS.forEach((g) => g.tags.forEach((t) => { m[t] = g.name; }));
+    return m;
+  })();
+
   function tagStats(list) {
     const map = {};
     list.forEach((q) => {
       if (!answered(q.id)) return;                 // 푼 문제만 집계
       const r = rec(q.id);
-      (q.tags || []).forEach((t) => {
+      (q.tags || []).filter((t) => !TAG_EXCLUDE.has(t)).forEach((t) => {
         const m = (map[t] = map[t] || { tag: t, solved: 0, ok: 0, ids: [] });
         m.solved++; if (r.correct) m.ok++; m.ids.push(q.id);
       });
@@ -62,15 +80,41 @@
     })).sort((a, b) => b.bad - a.bad || a.rate - b.rate || b.solved - a.solved);
   }
 
-  function tagRows(stats, scopeHref) {
+  function tagCard(m, href) {
+    const cls = m.rate >= 80 ? "good" : m.rate >= 50 ? "mid" : "poor";
+    return `<a class="exam-card tag-card" href="${href}">
+      <div class="ec-head"><h3>${esc(m.tag)}</h3><span class="badge ${m.bad ? "bad" : "ok"}">${m.rate}%</span></div>
+      <p class="ec-count">${m.solved}문제 풀이</p>
+      <div class="bar"><span class="${cls}" style="width:${m.rate}%"></span></div>
+      <p class="ec-meta">
+        <span>정답 ${m.ok}</span>
+        ${m.bad ? `<span class="dot">·</span><span class="warn-t">오답 ${m.bad}</span>` : ""}
+      </p>
+    </a>`;
+  }
+
+  function tagGroups(stats, scopeHref) {
     if (!stats.length) return "";
-    return `<div class="tagrows">` + stats.map((m) => `
-      <a class="tagrow" href="${scopeHref(m.tag)}">
-        <span class="tr-name">${esc(m.tag)}</span>
-        <span class="tr-bar"><span class="${m.rate >= 80 ? "good" : m.rate >= 50 ? "mid" : "poor"}" style="width:${m.rate}%"></span></span>
-        <span class="tr-rate">${m.rate}%</span>
-        <span class="tr-count">${m.ok}/${m.solved}</span>
-      </a>`).join("") + `</div>`;
+    const buckets = new Map();
+    stats.forEach((m) => {
+      const g = GROUP_OF[m.tag] || "기타";
+      if (!buckets.has(g)) buckets.set(g, []);
+      buckets.get(g).push(m);
+    });
+    const order = TAG_GROUPS.map((g) => g.name).concat("기타");
+    return order.filter((g) => buckets.has(g)).map((g) => {
+      const rows = buckets.get(g);
+      const solved = rows.reduce((a, m) => a + m.solved, 0);
+      const ok = rows.reduce((a, m) => a + m.ok, 0);
+      const bad = solved - ok;
+      return `<section class="taggroup">
+        <div class="tg-head">
+          <h4>${esc(g)}</h4>
+          <span class="muted">${rows.length}개 분류 · 정답 ${ok} / ${solved}${bad ? " · 오답 " + bad : ""}</span>
+        </div>
+        <div class="exams">${rows.map((m) => tagCard(m, scopeHref(m.tag))).join("")}</div>
+      </section>`;
+    }).join("");
   }
 
   /* ---------------- 세트 목록 ---------------- */
@@ -101,7 +145,7 @@
 
     const stats = tagStats(ALL);
     $("#homeTagsWrap").hidden = !stats.length;
-    $("#homeTags").innerHTML = tagRows(stats, (tg) => "#/tag/" + encodeURIComponent(tg));
+    $("#homeTags").innerHTML = tagGroups(stats, (tg) => "#/tag/" + encodeURIComponent(tg));
   }
 
   /* ---------------- 세트 상세 ---------------- */
@@ -144,7 +188,7 @@
 
     const stats = tagStats(e.questions);
     $("#dTagsWrap").hidden = !stats.length;
-    $("#dTags").innerHTML = tagRows(stats, (tg) => "#/tag/" + encodeURIComponent(tg));
+    $("#dTags").innerHTML = tagGroups(stats, (tg) => "#/tag/" + encodeURIComponent(tg));
 
     renderBoard(e);
     if (S.board === null) { await loadBoard(); renderBoard(examOf(S.scope.id)); }

@@ -229,19 +229,23 @@ kbd{font:11px/1 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--pan
 .board tr.me td:first-child{border-radius:8px 0 0 8px}
 .board tr.me td:last-child{border-radius:0 8px 8px 0}
 
-/* 분류별 성적 */
-.tagrows{display:flex;flex-direction:column}
-.tagrow{display:grid;grid-template-columns:minmax(90px,1.4fr) minmax(60px,2fr) 42px 52px;align-items:center;gap:10px;
-  padding:8px 6px;border-radius:9px;text-decoration:none;color:inherit;font-size:13px}
-.tagrow:hover{background:var(--panel-2)}
-.tr-name{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.tr-bar{height:6px;border-radius:99px;background:var(--panel-2);overflow:hidden}
-.tr-bar span{display:block;height:100%;border-radius:99px}
-.tr-bar .good{background:var(--ok)} .tr-bar .mid{background:#d9a13b} .tr-bar .poor{background:var(--bad)}
-.tr-rate{text-align:right;color:var(--ink-2);font-variant-numeric:tabular-nums}
-.tr-count{text-align:right;color:var(--ink-3);font-variant-numeric:tabular-nums}
+/* 분류별 성적 — 세트 카드와 같은 디자인, 그룹으로 나눠서 */
+.taggroup{margin-top:20px}
+.taggroup:first-child{margin-top:4px}
+.tg-head{display:flex;align-items:baseline;gap:10px;justify-content:space-between;margin:0 2px 10px;flex-wrap:wrap}
+.tg-head h4{margin:0;font-size:13px;font-weight:700;letter-spacing:.01em;color:var(--ink)}
+.tag-card{display:flex;flex-direction:column}
+.tag-card .ec-head{flex-wrap:nowrap;align-items:flex-start;gap:6px}
+.tag-card .ec-head h3{font-size:14.5px;flex:1;min-width:0;line-height:1.35}
+.tag-card .ec-head .badge{flex:none;margin-top:1px}
+.tag-card .bar span.good{background:var(--ok)}
+.tag-card .bar span.mid{background:#d9a13b}
+.tag-card .bar span.poor{background:var(--bad)}
+.tag-card .ec-count{margin:7px 0 9px;font-size:12.5px;margin-bottom:auto;padding-bottom:9px}
+.tag-card .ec-meta{font-size:12px}
+.taggroup .exams{grid-template-columns:repeat(auto-fill,minmax(185px,1fr));gap:12px}
 @media (max-width:560px){
-  .tagrow{grid-template-columns:1fr 40px 50px}
-  .tr-bar{display:none}
   .board td{padding:8px 5px;font-size:12.5px}
+  .taggroup .exams{grid-template-columns:repeat(auto-fill,minmax(145px,1fr));gap:10px}
+  .panel{padding:14px}
 }
