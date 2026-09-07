@@ -11,13 +11,13 @@
 <body>
 <header class="top">
   <div class="top-row">
-    <div class="brand">
+    <a class="brand" href="#/" id="brand">
       <span class="cloud">☁️</span>
       <div>
         <h1>AWS SAA-C03</h1>
         <p class="sub">문제 모음 · 오답 노트</p>
       </div>
-    </div>
+    </a>
     <div class="top-actions">
       <div class="seg" id="langSeg" role="group" aria-label="언어">
         <button data-lang="en" class="on">EN</button>
@@ -30,7 +30,7 @@
 
   <div class="stats" id="stats"></div>
 
-  <div class="controls">
+  <div class="controls" id="controls" hidden>
     <div class="seg wrap" id="filterSeg" role="group" aria-label="필터">
       <button data-filter="all" class="on">전체</button>
       <button data-filter="unanswered">안 푼 문제</button>
@@ -44,13 +44,35 @@
 
 <main>
   <div id="notice" class="notice" hidden></div>
-  <div id="list" class="list"></div>
-  <div id="empty" class="empty" hidden>조건에 맞는 문제가 없어요.</div>
+
+  <!-- 시험 선택 화면 -->
+  <section id="home" hidden>
+    <div class="home-head">
+      <h2>어느 세트를 풀까요?</h2>
+      <p>세트를 고르면 그 안의 문제만 풀립니다.</p>
+    </div>
+    <div class="exams" id="exams"></div>
+    <div class="board-wrap" id="boardWrap" hidden>
+      <h3>같이 푸는 사람들</h3>
+      <table class="board"><tbody id="boardBody"></tbody></table>
+    </div>
+  </section>
+
+  <!-- 문제 화면 -->
+  <section id="exam" hidden>
+    <div class="crumb">
+      <a href="#/" class="backlink">← 세트 목록</a>
+      <h2 id="examTitle"></h2>
+      <span class="badge" id="examNote"></span>
+    </div>
+    <div id="list" class="list"></div>
+    <div id="empty" class="empty" hidden>조건에 맞는 문제가 없어요.</div>
+  </section>
 </main>
 
 <footer class="foot">
   <span id="modeTag"></span>
-  <span>문제 추가는 <code>data/questions.js</code> · <a href="https://github.com/mlnls/aws-saa-c03" target="_blank" rel="noopener">repo</a></span>
+  <span>문제 추가는 <code>data/exam*.js</code> · <a href="https://github.com/mlnls/aws-saa-c03" target="_blank" rel="noopener">repo</a></span>
 </footer>
 
 <dialog id="authDlg">
@@ -73,7 +95,8 @@
 </dialog>
 
 <script src="assets/config.js"></script>
-<script src="data/questions.js"></script>
+<!-- 문제 세트: 새 세트를 추가하면 파일을 만들고 여기에 한 줄 추가 -->
+<script src="data/exam1.js"></script>
 <script src="assets/store.js"></script>
 <script src="assets/app.js"></script>
 </body>

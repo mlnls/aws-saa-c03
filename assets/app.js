@@ -1,47 +1,102 @@
 (function () {
-  const QS = (window.QUESTIONS || []).slice();
+  const EXAMS = (window.SAA_EXAMS || []).map((e) => ({
+    id: e.id, title: e.title, note: e.note || "",
+    questions: (e.questions || []).map((q) => Object.assign({ examId: e.id }, q)),
+  }));
+  const ALL = EXAMS.flatMap((e) => e.questions);
+
   const $ = (s, r = document) => r.querySelector(s);
   const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
   const bold = (s) => esc(s).replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
 
   const S = {
     lang: localStorage.getItem("saa.lang") || "en",
-    filter: "all",
-    tag: "",
-    search: "",
-    pending: {},   // qid -> [keys] (복수 정답 문제 임시 선택)
+    filter: "all", tag: "", search: "",
+    examId: null,       // null 이면 세트 선택 화면
+    pending: {},
   };
 
   const txt = (o) => (!o ? "" : S.lang === "ko" ? (o.ko || o.en || "") : (o.en || o.ko || ""));
   const rec = (id) => Store.records[id] || {};
   const answered = (id) => Array.isArray(rec(id).choice) && rec(id).choice.length > 0;
+  const examOf = (id) => EXAMS.find((e) => e.id === id);
+
+  function tally(list) {
+    let ok = 0, bad = 0, marked = 0;
+    list.forEach((q) => { const r = rec(q.id); if (r.correct === true) ok++; else if (r.correct === false) bad++; if (r.bookmarked) marked++; });
+    return { total: list.length, ok, bad, marked, solved: ok + bad, rate: ok + bad ? Math.round((ok / (ok + bad)) * 100) : 0 };
+  }
 
   /* ---------------- theme ---------------- */
   const savedTheme = localStorage.getItem("saa.theme");
   if (savedTheme) document.documentElement.dataset.theme = savedTheme;
   $("#themeBtn").addEventListener("click", () => {
-    const cur = document.documentElement.dataset.theme
-      || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+    const cur = document.documentElement.dataset.theme || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
     const next = cur === "dark" ? "light" : "dark";
     document.documentElement.dataset.theme = next;
     localStorage.setItem("saa.theme", next);
   });
 
-  /* ---------------- render ---------------- */
-  function visible() {
+  /* ---------------- 세트 선택 화면 ---------------- */
+  function renderHome() {
+    $("#exams").innerHTML = EXAMS.map((e) => {
+      const t = tally(e.questions);
+      const pct = t.total ? Math.round((t.solved / t.total) * 100) : 0;
+      return `<a class="exam-card" href="#/${e.id}">
+        <div class="ec-head">
+          <h3>${esc(e.title)}</h3>
+          ${e.note ? `<span class="badge">${esc(e.note)}</span>` : ""}
+        </div>
+        <p class="ec-count">${t.total}문제</p>
+        <div class="bar"><span style="width:${pct}%"></span></div>
+        <p class="ec-meta">
+          <span>${t.solved} / ${t.total} 풀이</span>
+          ${t.solved ? `<span class="dot">·</span><span>정답률 ${t.rate}%</span>` : ""}
+          ${t.bad ? `<span class="dot">·</span><span class="warn-t">오답 ${t.bad}</span>` : ""}
+        </p>
+      </a>`;
+    }).join("") || `<p class="empty">아직 문제 세트가 없어요. <code>data/exam1.js</code> 에 문제를 추가해 주세요.</p>`;
+
+    const t = tally(ALL);
+    $("#stats").innerHTML = [
+      `<span class="chip">세트 <b>${EXAMS.length}</b></span>`,
+      `<span class="chip">전체 문제 <b>${t.total}</b></span>`,
+      `<span class="chip">푼 문제 <b>${t.solved}</b></span>`,
+      t.solved ? `<span class="chip good">정답률 <b>${t.rate}%</b></span>` : "",
+      t.bad ? `<span class="chip bad">오답 <b>${t.bad}</b></span>` : "",
+    ].join("");
+    loadBoard();
+  }
+
+  async function loadBoard() {
+    const wrap = $("#boardWrap");
+    if (!Store.user || Store.mode !== "supabase") { wrap.hidden = true; return; }
+    try {
+      const rows = await Store.board();
+      const real = (rows || []).filter((r) => !/^__probe_/.test(r.nickname));
+      if (!real.length) { wrap.hidden = true; return; }
+      $("#boardBody").innerHTML = real.map((r) => {
+        const rate = Number(r.solved) ? Math.round((Number(r.correct) / Number(r.solved)) * 100) : 0;
+        const me = Store.user && r.nickname === Store.user.nickname;
+        return `<tr${me ? ' class="me"' : ""}><td>${esc(r.nickname)}${me ? " (나)" : ""}</td>
+          <td>${r.solved}문제</td><td>정답률 ${rate}%</td></tr>`;
+      }).join("");
+      wrap.hidden = false;
+    } catch (e) { wrap.hidden = true; }
+  }
+
+  /* ---------------- 문제 화면 ---------------- */
+  function visible(list) {
     const s = S.search.trim().toLowerCase();
-    return QS.filter((q) => {
+    return list.filter((q) => {
       const r = rec(q.id);
       if (S.filter === "unanswered" && answered(q.id)) return false;
       if (S.filter === "wrong" && r.correct !== false) return false;
       if (S.filter === "bookmark" && !r.bookmarked) return false;
       if (S.tag && !(q.tags || []).includes(S.tag)) return false;
       if (s) {
-        const hay = [
-          "#" + q.number, q.question.en, q.question.ko,
-          (q.options || []).map((o) => o.en + " " + o.ko).join(" "),
-          (q.tags || []).join(" "),
-        ].join(" ").toLowerCase();
+        const hay = ["#" + q.number, q.question.en, q.question.ko,
+          (q.options || []).map((o) => o.en + " " + o.ko).join(" "), (q.tags || []).join(" ")].join(" ").toLowerCase();
         if (!hay.includes(s)) return false;
       }
       return true;
@@ -53,7 +108,6 @@
     const multi = (q.answer || []).length > 1;
     const done = answered(q.id);
     const chosen = r.choice || [];
-    const cls = done ? (r.correct ? "card done-ok" : "card done-bad") : "card";
     const pend = S.pending[q.id] || [];
 
     const opts = (q.options || []).map((o) => {
@@ -63,9 +117,7 @@
       if (done) {
         if (isAns) { c += " correct"; mark = isSel ? "✓ 정답" : "정답"; }
         else if (isSel) { c += " chosen-bad"; mark = "✗ 내 선택"; }
-      } else if (multi && pend.includes(o.k)) {
-        c += " correct";
-      }
+      } else if (multi && pend.includes(o.k)) c += " correct";
       return `<li><button class="${c}" data-act="pick" data-q="${q.id}" data-k="${o.k}" ${done ? "disabled" : ""}>
         <span class="k">${o.k}.</span><span class="t">${esc(txt(o))}</span>
         ${mark ? `<span class="mark">${mark}</span>` : ""}</button></li>`;
@@ -82,13 +134,10 @@
         ${wrongs ? `<ul class="wrongs">${wrongs}</ul>` : ""}
       </div>` : "";
 
-    const tags = (q.tags || []).map((t) => `<span class="badge">${esc(t)}</span>`).join("");
-
-    return `<article class="${cls}" id="q-${q.id}">
+    return `<article class="${done ? (r.correct ? "card done-ok" : "card done-bad") : "card"}" id="q-${q.id}">
       <div class="chead">
         <span class="qno">Question #${q.number}</span>
-        <span class="badge">Topic ${q.topic}${q.exam ? " · Exam " + q.exam : ""}</span>
-        ${tags}
+        ${(q.tags || []).map((t) => `<span class="badge">${esc(t)}</span>`).join("")}
         ${done ? `<span class="badge ${r.correct ? "ok" : "bad"}">${r.correct ? "정답" : "오답"}</span>` : ""}
         <span class="spacer"></span>
         <button class="iconbtn ${r.bookmarked ? "on" : ""}" data-act="mark" data-q="${q.id}" title="북마크">${r.bookmarked ? "★" : "☆"}</button>
@@ -102,55 +151,74 @@
     </article>`;
   }
 
-  function renderStats() {
-    const total = QS.length;
-    let ok = 0, bad = 0, marked = 0;
-    QS.forEach((q) => { const r = rec(q.id); if (r.correct === true) ok++; else if (r.correct === false) bad++; if (r.bookmarked) marked++; });
-    const solved = ok + bad;
-    const rate = solved ? Math.round((ok / solved) * 100) : 0;
+  function renderExam() {
+    const e = examOf(S.examId);
+    if (!e) { location.hash = "#/"; return; }
+    $("#examTitle").textContent = e.title;
+    $("#examNote").textContent = e.note || "";
+    $("#examNote").hidden = !e.note;
+
+    const list = visible(e.questions);
+    $("#list").innerHTML = list.map(card).join("");
+    $("#empty").hidden = list.length > 0;
+
+    const t = tally(e.questions);
     $("#stats").innerHTML = [
-      `<span class="chip">문제 <b>${total}</b></span>`,
-      `<span class="chip">푼 문제 <b>${solved}</b></span>`,
-      `<span class="chip good">정답 <b>${ok}</b></span>`,
-      `<span class="chip bad">오답 <b>${bad}</b></span>`,
-      `<span class="chip">정답률 <b>${rate}%</b></span>`,
-      marked ? `<span class="chip">북마크 <b>${marked}</b></span>` : "",
+      `<span class="chip">${esc(e.title)} <b>${t.total}</b>문제</span>`,
+      `<span class="chip">푼 문제 <b>${t.solved}</b></span>`,
+      `<span class="chip good">정답 <b>${t.ok}</b></span>`,
+      `<span class="chip bad">오답 <b>${t.bad}</b></span>`,
+      `<span class="chip">정답률 <b>${t.rate}%</b></span>`,
+      t.marked ? `<span class="chip">북마크 <b>${t.marked}</b></span>` : "",
     ].join("");
+
+    const tags = [...new Set(e.questions.flatMap((q) => q.tags || []))].sort();
+    const sel = $("#tagSel");
+    sel.innerHTML = `<option value="">모든 태그</option>` + tags.map((t2) => `<option value="${esc(t2)}"${S.tag === t2 ? " selected" : ""}>${esc(t2)}</option>`).join("");
   }
 
   function render() {
-    const list = visible();
-    $("#list").innerHTML = list.map(card).join("");
-    $("#empty").hidden = list.length > 0;
-    renderStats();
+    const home = !S.examId;
+    $("#home").hidden = !home;
+    $("#exam").hidden = home;
+    $("#controls").hidden = home;
+    if (home) renderHome(); else renderExam();
   }
+
+  /* ---------------- routing ---------------- */
+  function readHash() {
+    const m = /^#\/([\w.-]+)/.exec(location.hash || "");
+    const id = m && m[1];
+    S.examId = id && examOf(id) ? id : null;
+  }
+  addEventListener("hashchange", () => {
+    readHash(); S.filter = "all"; S.tag = ""; S.search = "";
+    $("#search").value = "";
+    [...$("#filterSeg").children].forEach((x) => x.classList.toggle("on", x.dataset.filter === "all"));
+    render(); scrollTo({ top: 0 });
+  });
 
   /* ---------------- interactions ---------------- */
   $("#list").addEventListener("click", async (e) => {
     const btn = e.target.closest("button[data-act]");
     if (!btn) return;
-    const q = QS.find((x) => x.id === btn.dataset.q);
+    const q = ALL.find((x) => x.id === btn.dataset.q);
     if (!q) return;
-    const act = btn.dataset.act;
 
-    if (act === "pick") {
+    if (btn.dataset.act === "pick") {
       if (!Store.user) { openAuth("기록을 저장하려면 먼저 닉네임으로 로그인해 주세요."); return; }
-      const multi = (q.answer || []).length > 1;
-      if (multi) {
-        const cur = S.pending[q.id] || [];
-        const k = btn.dataset.k;
+      if ((q.answer || []).length > 1) {
+        const cur = S.pending[q.id] || [], k = btn.dataset.k;
         S.pending[q.id] = cur.includes(k) ? cur.filter((x) => x !== k) : cur.concat(k).slice(-q.answer.length);
         render();
-      } else {
-        await grade(q, [btn.dataset.k]);
-      }
-    } else if (act === "submit") {
+      } else await grade(q, [btn.dataset.k]);
+    } else if (btn.dataset.act === "submit") {
       await grade(q, (S.pending[q.id] || []).slice());
-    } else if (act === "reset") {
+    } else if (btn.dataset.act === "reset") {
       delete S.pending[q.id];
       await Store.set(q.id, { choice: null, correct: null });
       render();
-    } else if (act === "mark") {
+    } else if (btn.dataset.act === "mark") {
       if (!Store.user) { openAuth("북마크를 저장하려면 먼저 로그인해 주세요."); return; }
       await Store.set(q.id, { bookmarked: !rec(q.id).bookmarked });
       render();
@@ -159,9 +227,8 @@
 
   async function grade(q, choice) {
     const a = (q.answer || []).slice().sort().join(",");
-    const c = choice.slice().sort().join(",");
     delete S.pending[q.id];
-    await Store.set(q.id, { choice, correct: a === c });
+    await Store.set(q.id, { choice, correct: a === choice.slice().sort().join(",") });
     render();
     const node = document.getElementById("q-" + q.id);
     if (node) node.scrollIntoView({ block: "nearest", behavior: "smooth" });
@@ -197,10 +264,8 @@
       if (confirm(Store.user.nickname + " 님, 로그아웃할까요?")) { await Store.signOut(); syncAuthUI(); render(); }
     } else openAuth();
   });
-
   async function submitAuth(kind) {
-    const nick = $("#nick").value.trim(), pin = $("#pin").value;
-    const err = $("#authErr");
+    const nick = $("#nick").value.trim(), pin = $("#pin").value, err = $("#authErr");
     err.hidden = true;
     if (!/^[A-Za-z0-9._-]{2,20}$/.test(nick)) { err.hidden = false; err.textContent = "닉네임은 영문·숫자·._- 로 2~20자."; return; }
     if (pin.length < 6) { err.hidden = false; err.textContent = "PIN은 6자 이상이어야 해요."; return; }
@@ -208,7 +273,7 @@
       await (kind === "up" ? Store.signUp(nick, pin) : Store.signIn(nick, pin));
       dlg.close(); $("#pin").value = "";
       syncAuthUI(); render();
-    } catch (e) { err.hidden = false; err.textContent = e.message || String(e); }
+    } catch (e2) { err.hidden = false; err.textContent = e2.message || String(e2); }
   }
   $("#doSignIn").addEventListener("click", () => submitAuth("in"));
   $("#doSignUp").addEventListener("click", () => submitAuth("up"));
@@ -221,7 +286,7 @@
     const n = $("#notice");
     if (Store.mode === "local") {
       n.hidden = false;
-      n.innerHTML = "지금은 <b>이 브라우저에만 저장</b>되는 모드예요. Supabase 키를 <code>assets/config.js</code>에 넣으면 기기와 상관없이 기록이 이어집니다.";
+      n.innerHTML = "지금은 <b>이 브라우저에만 저장</b>되는 모드예요. <code>assets/config.js</code> 에 Supabase 값을 넣으면 기기와 상관없이 기록이 이어집니다.";
     } else if (!Store.user) {
       n.hidden = false;
       n.innerHTML = "닉네임 + PIN으로 로그인하면 내가 틀린 문제만 따로 모아 볼 수 있어요.";
@@ -231,9 +296,8 @@
 
   /* ---------------- init ---------------- */
   (async function init() {
-    const tags = [...new Set(QS.flatMap((q) => q.tags || []))].sort();
-    $("#tagSel").insertAdjacentHTML("beforeend", tags.map((t) => `<option value="${esc(t)}">${esc(t)}</option>`).join(""));
     [...$("#langSeg").children].forEach((x) => x.classList.toggle("on", x.dataset.lang === S.lang));
+    readHash();
     try { await Store.restore(); } catch (e) { console.warn(e); }
     syncAuthUI();
     render();

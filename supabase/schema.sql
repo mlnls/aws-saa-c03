@@ -115,11 +115,34 @@ returns table (nickname text, solved bigint, correct bigint) language sql securi
   order by 3 desc, 2 desc;
 $$;
 
+-- 내 기록 전체 초기화
+create or replace function public.saa_reset(p_token uuid)
+returns void language plpgsql security definer set search_path = public as $$
+declare uid uuid;
+begin
+  select id into uid from public.saa_users where token = p_token;
+  if uid is null then raise exception 'BAD_TOKEN'; end if;
+  delete from public.saa_attempts where user_id = uid;
+end $$;
+
+-- 계정 삭제 (기록까지 함께 삭제, PIN 재확인)
+create or replace function public.saa_delete_me(p_token uuid, p_pin text)
+returns void language plpgsql security definer set search_path = public, extensions as $$
+declare v public.saa_users;
+begin
+  select * into v from public.saa_users where token = p_token;
+  if v.id is null then raise exception 'BAD_TOKEN'; end if;
+  if v.pin_hash <> extensions.crypt(p_pin, v.pin_hash) then raise exception 'BAD_PIN'; end if;
+  delete from public.saa_users where id = v.id;
+end $$;
+
 grant execute on function
   public.saa_signup(text, text),
   public.saa_login(text, text),
   public.saa_me(uuid),
   public.saa_records(uuid),
   public.saa_save(uuid, text, text[], boolean, boolean),
+  public.saa_reset(uuid),
+  public.saa_delete_me(uuid, text),
   public.saa_board()
 to anon, authenticated;

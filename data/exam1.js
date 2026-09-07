@@ -1,11 +1,15 @@
-/* AWS SAA-C03 문제 데이터
- * 새 문제는 이 배열 끝에 객체를 추가하면 됩니다. (스키마는 README.md 참고)
+/* Exam 1
+ * ExamTopics Topic 1 / Exam A
+ * 새 문제는 questions 배열 끝에 추가하세요. (스키마는 README.md)
  */
-window.QUESTIONS = [
+window.SAA_EXAMS = window.SAA_EXAMS || [];
+window.SAA_EXAMS.push({
+  id: "exam1",
+  title: "Exam 1",
+  note: "Topic 1 · Exam A",
+  questions: [
   {
-    id: "t1-a-1",
-    topic: 1,
-    exam: "A",
+    id: "exam1-1",
     number: 1,
     tags: ["S3", "Data Transfer"],
     question: {
@@ -37,4 +41,5 @@ window.QUESTIONS = [
       D: { ko: "EC2 + EBS 스냅샷 복사/복원을 직접 운영해야 하고, 최종적으로 S3로 옮기는 단계도 더 필요합니다. 가장 복잡합니다.", en: "You would have to operate EC2, EBS snapshot copies, and restores, then still move data into S3 — by far the most complex path." }
     }
   }
-];
+]
+});
