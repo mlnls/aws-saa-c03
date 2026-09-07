@@ -46,8 +46,9 @@ window.Store = (function () {
     if (/DUP_NICK/.test(raw)) return "이미 있는 닉네임이에요. 로그인해 주세요.";
     if (/NO_USER/.test(raw)) return "없는 닉네임이에요. '처음이에요 (가입)'을 눌러 주세요.";
     if (/BAD_PIN/.test(raw)) return "PIN이 맞지 않아요.";
-    if (/LOCKED/.test(raw)) return "PIN을 여러 번 틀려서 10분간 잠겼어요.";
+    if (/LOCKED/.test(raw)) return "PIN을 여러 번 틀려서 잠시 잠겼어요. 10분 뒤에 다시 시도해 주세요.";
     if (/BAD_TOKEN/.test(raw)) return "세션이 만료됐어요. 다시 로그인해 주세요.";
+    if (/^EMPTY$/.test(raw)) return "서버 응답이 비어 있어요. 잠시 후 다시 시도해 주세요.";
     if (/saa_signup|saa_login|Could not find the function|PGRST202/.test(raw))
       return "DB 함수가 없어요. supabase/schema.sql 을 SQL Editor에서 실행해 주세요.";
     if (/Failed to fetch|NetworkError/i.test(raw)) return "서버에 연결할 수 없어요. 네트워크를 확인해 주세요.";
@@ -65,6 +66,7 @@ window.Store = (function () {
       api.records = map;
     },
     async adopt(u) {
+      if (!u || u.error) throw new Error(msgOf(u ? String(u.error) : "EMPTY"));
       localStorage.setItem(LS_TOKEN, u.token);
       api.user = { id: u.id, nickname: u.nickname };
       await this.loadRecords();
@@ -76,7 +78,7 @@ window.Store = (function () {
       const token = localStorage.getItem(LS_TOKEN);
       if (!token) return null;
       const u = await rpc("saa_me", { p_token: token });
-      if (!u) { localStorage.removeItem(LS_TOKEN); return null; }
+      if (!u || u.error) { localStorage.removeItem(LS_TOKEN); return null; }
       return this.adopt(u);
     },
     async signOut() { localStorage.removeItem(LS_TOKEN); },

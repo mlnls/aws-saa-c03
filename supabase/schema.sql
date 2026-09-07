@@ -37,14 +37,19 @@ alter table public.saa_users    enable row level security;
 alter table public.saa_attempts enable row level security;
 revoke all on public.saa_users, public.saa_attempts from anon, authenticated;
 
+-- 가입 / 로그인은 실패를 예외로 던지지 않고 {"error": "..."} 를 반환한다.
+-- (예외를 던지면 트랜잭션이 롤백되어 PIN 실패 카운터가 저장되지 않기 때문)
+
 -- 가입
 create or replace function public.saa_signup(p_nick text, p_pin text)
 returns json language plpgsql security definer set search_path = public, extensions as $$
 declare v public.saa_users;
 begin
-  if p_nick !~ '^[A-Za-z0-9._-]{2,20}$' then raise exception 'BAD_NICK'; end if;
-  if length(p_pin) < 6 then raise exception 'SHORT_PIN'; end if;
-  if exists (select 1 from public.saa_users where handle = lower(p_nick)) then raise exception 'DUP_NICK'; end if;
+  if p_nick !~ '^[A-Za-z0-9._-]{2,20}$' then return json_build_object('error', 'BAD_NICK'); end if;
+  if length(p_pin) < 6 then return json_build_object('error', 'SHORT_PIN'); end if;
+  if exists (select 1 from public.saa_users where handle = lower(p_nick)) then
+    return json_build_object('error', 'DUP_NICK');
+  end if;
   insert into public.saa_users (handle, nickname, pin_hash)
   values (lower(p_nick), p_nick, extensions.crypt(p_pin, extensions.gen_salt('bf')))
   returning * into v;
@@ -57,14 +62,17 @@ returns json language plpgsql security definer set search_path = public, extensi
 declare v public.saa_users;
 begin
   select * into v from public.saa_users where handle = lower(p_nick);
-  if v.id is null then raise exception 'NO_USER'; end if;
-  if v.locked_until is not null and v.locked_until > now() then raise exception 'LOCKED'; end if;
+  if v.id is null then return json_build_object('error', 'NO_USER'); end if;
+  if v.locked_until is not null and v.locked_until > now() then
+    return json_build_object('error', 'LOCKED',
+      'seconds', ceil(extract(epoch from (v.locked_until - now()))));
+  end if;
   if v.pin_hash <> extensions.crypt(p_pin, v.pin_hash) then
     update public.saa_users
        set failed = case when failed + 1 >= 10 then 0 else failed + 1 end,
            locked_until = case when failed + 1 >= 10 then now() + interval '10 minutes' else locked_until end
      where id = v.id;
-    raise exception 'BAD_PIN';
+    return json_build_object('error', 'BAD_PIN');
   end if;
   update public.saa_users set failed = 0, locked_until = null where id = v.id;
   return json_build_object('id', v.id, 'token', v.token, 'nickname', v.nickname);
@@ -119,6 +127,27 @@ language sql security definer set search_path = public as $$
   group by u.nickname, split_part(a.qid, '-', 1)
   order by 1, 2;
 $$;
+
+-- 내 기록 전체 초기화
+create or replace function public.saa_reset(p_token uuid)
+returns void language plpgsql security definer set search_path = public as $$
+declare uid uuid;
+begin
+  select id into uid from public.saa_users where token = p_token;
+  if uid is null then raise exception 'BAD_TOKEN'; end if;
+  delete from public.saa_attempts where user_id = uid;
+end $$;
+
+-- 계정 삭제 (기록까지 함께 삭제, PIN 재확인)
+create or replace function public.saa_delete_me(p_token uuid, p_pin text)
+returns void language plpgsql security definer set search_path = public, extensions as $$
+declare v public.saa_users;
+begin
+  select * into v from public.saa_users where token = p_token;
+  if v.id is null then raise exception 'BAD_TOKEN'; end if;
+  if v.pin_hash <> extensions.crypt(p_pin, v.pin_hash) then raise exception 'BAD_PIN'; end if;
+  delete from public.saa_users where id = v.id;
+end $$;
 
 grant execute on function
   public.saa_signup(text, text),
