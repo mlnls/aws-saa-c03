@@ -22,6 +22,9 @@
     sel: {}, reveal: {},
     board: null,                  // saa_board 결과 캐시
     boardLegacy: false,
+    adm: null,                    // 관리자 데이터 {rows, users}
+    admPerson: null,              // 상세를 펼친 사람
+    admScope: "wrong",
   };
 
   const txt = (o) => (!o ? "" : S.lang === "ko" ? (o.ko || o.en || "") : (o.en || o.ko || ""));
@@ -228,6 +231,126 @@
     wrap.hidden = false;
   }
 
+  /* ---------------- 관리자 화면 ---------------- */
+  async function renderAdmin() {
+    const u = Store.user;
+    if (!u || !u.isAdmin) { location.hash = "#/"; return; }
+    $("#adminNote").textContent = Store.mode === "supabase" ? "전체 사용자 기록" : "이 브라우저에 저장된 기록";
+    $("#stats").innerHTML = "";
+
+    if (!S.adm) {
+      $("#admUsers").innerHTML = `<tr><td>불러오는 중…</td></tr>`;
+      try {
+        const [rows, users] = await Promise.all([Store.adminRows(), Store.adminUsers()]);
+        S.adm = { rows: rows || [], users: users || [] };
+      } catch (e) { S.adm = { rows: [], users: [], error: e.message || String(e) }; }
+      if (S.view !== "admin") return;
+    }
+    const rows = S.adm.rows, people = {};
+    (S.adm.users || []).forEach((p) => { people[p.nickname] = { nickname: p.nickname, isAdmin: p.is_admin, solved: 0, ok: 0, last: null }; });
+    rows.forEach((r) => {
+      const p = (people[r.nickname] = people[r.nickname] || { nickname: r.nickname, solved: 0, ok: 0, last: null });
+      if (r.correct === true || r.correct === false) { p.solved++; if (r.correct) p.ok++; }
+      if (r.updated_at && (!p.last || r.updated_at > p.last)) p.last = r.updated_at;
+    });
+    const list = Object.values(people).sort((a, b) => b.solved - a.solved || a.nickname.localeCompare(b.nickname));
+    const totalSolved = rows.filter((r) => r.correct !== null).length;
+    const totalOk = rows.filter((r) => r.correct === true).length;
+
+    $("#stats").innerHTML = [
+      `<span class="chip">사용자 <b>${list.length}</b></span>`,
+      `<span class="chip">총 풀이 <b>${totalSolved}</b></span>`,
+      `<span class="chip good">정답 <b>${totalOk}</b></span>`,
+      `<span class="chip bad">오답 <b>${totalSolved - totalOk}</b></span>`,
+      totalSolved ? `<span class="chip">전체 정답률 <b>${Math.round((totalOk / totalSolved) * 100)}%</b></span>` : "",
+    ].join("");
+
+    $("#admUsers").innerHTML = S.adm.error
+      ? `<tr><td>불러오지 못했어요: ${esc(S.adm.error)}</td></tr>`
+      : (list.length ? list.map((p) => {
+          const rate = p.solved ? Math.round((p.ok / p.solved) * 100) : 0;
+          const me = Store.user && p.nickname === Store.user.nickname;
+          return `<tr${S.admPerson === p.nickname ? ' class="me"' : ""}>
+            <td><a href="#" class="linky" data-person="${esc(p.nickname)}">${esc(p.nickname)}</a>${p.isAdmin ? ' <span class="badge">관리자</span>' : ""}${me ? " (나)" : ""}</td>
+            <td>${p.solved}문제</td>
+            <td>정답 ${p.ok}</td>
+            <td class="${p.solved - p.ok ? "bad-t" : ""}">오답 ${p.solved - p.ok}</td>
+            <td>정답률 ${rate}%</td>
+            <td class="muted">${p.last ? new Date(p.last).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }) : ""}</td>
+          </tr>`;
+        }).join("") : `<tr><td>아직 기록이 없어요.</td></tr>`);
+
+    // 선택한 사람의 오답 목록
+    const pw = $("#admPersonWrap");
+    if (S.admPerson) {
+      const mine = rows.filter((r) => r.nickname === S.admPerson && r.correct === false);
+      $("#admPersonTitle").textContent = S.admPerson + " 님이 틀린 문제 " + mine.length + "개";
+      $("#admPerson").innerHTML = mine.length ? `<div class="wrongrows">` + mine.map((r) => {
+        const q = byId(r.qid);
+        const ex = q && examOf(q.examId);
+        return `<div class="wrongrow">
+          <span class="wr-q">${q ? (ex ? esc(ex.title) + " " : "") + "#" + q.number : esc(r.qid)}</span>
+          <span class="wr-pick"><b class="bad-t">${(r.choice || []).join(", ") || "-"}</b> 선택</span>
+          <span class="wr-ans">정답 <b class="ok-t">${q ? q.answer.join(", ") : "?"}</b></span>
+          <span class="wr-tags">${q ? (q.tags || []).slice(0, 3).map((t) => `<span class="badge">${esc(t)}</span>`).join("") : ""}</span>
+        </div>`;
+      }).join("") + `</div>` : `<p class="muted">틀린 문제가 없어요.</p>`;
+      pw.hidden = false;
+    } else pw.hidden = true;
+
+    // 문제별 집계
+    const byQ = {};
+    rows.forEach((r) => {
+      if (r.correct === null) return;
+      const m = (byQ[r.qid] = byQ[r.qid] || { qid: r.qid, tries: 0, ok: 0, picks: {}, wrongBy: [] });
+      m.tries++;
+      if (r.correct) m.ok++; else m.wrongBy.push(r.nickname);
+      const key = (r.choice || []).join(",") || "-";
+      m.picks[key] = (m.picks[key] || 0) + 1;
+    });
+    let qlist = Object.values(byQ).map((m) => Object.assign(m, {
+      bad: m.tries - m.ok,
+      rate: m.tries ? Math.round((m.ok / m.tries) * 100) : 0,
+      q: byId(m.qid),
+    }));
+    if (S.admScope === "wrong") qlist = qlist.filter((m) => m.bad > 0);
+    qlist.sort((a, b) => b.bad - a.bad || a.rate - b.rate || (a.q && b.q ? a.q.number - b.q.number : 0));
+
+    $("#admQuestions").innerHTML = qlist.length ? qlist.map((m) => {
+      const q = m.q, ex = q && examOf(q.examId);
+      const ans = q ? q.answer.slice().sort().join(",") : "";
+      const picks = Object.keys(m.picks).sort((a, b) => m.picks[b] - m.picks[a]).map((k) => {
+        const right = k.split(",").sort().join(",") === ans;
+        return `<span class="pick ${right ? "ok" : "bad"}">${esc(k)} <b>${m.picks[k]}</b></span>`;
+      }).join("");
+      return `<div class="admq">
+        <div class="admq-head">
+          <span class="qno">${ex ? esc(ex.title) + " " : ""}#${q ? q.number : esc(m.qid)}</span>
+          ${q ? (q.tags || []).slice(0, 3).map((t) => `<span class="badge">${esc(t)}</span>`).join("") : ""}
+          <span class="spacer"></span>
+          <span class="badge ${m.bad ? "bad" : "ok"}">${m.tries}명 중 정답 ${m.ok} (${m.rate}%)</span>
+        </div>
+        <div class="admq-picks">${picks}<span class="muted">정답 ${ans || "?"}</span></div>
+        ${m.wrongBy.length ? `<div class="admq-wrong">틀린 사람: ${m.wrongBy.map((n) => esc(n)).join(", ")}</div>` : ""}
+        ${q ? `<div class="admq-text">${esc(txt(q.question)).split("\n")[0].slice(0, 150)}…</div>` : ""}
+      </div>`;
+    }).join("") : `<p class="muted">${S.admScope === "wrong" ? "아직 틀린 문제가 없어요." : "아직 푼 문제가 없어요."}</p>`;
+  }
+
+  $("#admUsers").addEventListener("click", (e) => {
+    const a = e.target.closest("a[data-person]");
+    if (!a) return;
+    e.preventDefault();
+    S.admPerson = S.admPerson === a.dataset.person ? null : a.dataset.person;
+    renderAdmin();
+  });
+  $("#admScope").addEventListener("click", (e) => {
+    const b = e.target.closest("button[data-scope]"); if (!b) return;
+    S.admScope = b.dataset.scope;
+    [...$("#admScope").children].forEach((x) => x.classList.toggle("on", x === b));
+    renderAdmin();
+  });
+
   /* ---------------- 풀이 대상 목록 ---------------- */
   function scopeQuestions() {
     if (!S.scope) return [];
@@ -383,9 +506,11 @@
     $("#home").hidden = S.view !== "home";
     $("#detail").hidden = S.view !== "detail";
     $("#exam").hidden = S.view !== "solve";
+    $("#admin").hidden = S.view !== "admin";
     $("#controls").hidden = S.view !== "solve";
     if (S.view === "home") renderHome();
     else if (S.view === "detail") renderDetail();
+    else if (S.view === "admin") renderAdmin();
     else renderSolve();
   }
 
@@ -407,6 +532,11 @@
     const parts = h.split("/").filter(Boolean);
     S.filter = "all"; S.tag = ""; S.search = ""; $("#search").value = "";
 
+    if (parts[0] === "admin") {
+      S.scope = null;
+      S.view = Store.user && Store.user.isAdmin ? "admin" : "home";
+      return;
+    }
     if (parts[0] === "tag" && parts[1]) {
       S.scope = { type: "tag", tag: parts.slice(1).join("/") };
       S.view = "solve"; rebuild(false); return;
@@ -536,7 +666,8 @@
   $("#authBtn").addEventListener("click", async () => {
     if (Store.user) {
       if (confirm(Store.user.nickname + " 님, 로그아웃할까요?")) {
-        await Store.signOut(); S.board = null; syncAuthUI();
+        await Store.signOut(); S.board = null; S.adm = null; S.admPerson = null; syncAuthUI();
+        if (S.view === "admin") { location.hash = "#/"; return; }
         if (S.view === "solve") rebuild(true);
         render();
       }
@@ -550,7 +681,7 @@
     try {
       await (kind === "up" ? Store.signUp(nick, pin) : Store.signIn(nick, pin));
       dlg.close(); $("#pin").value = "";
-      S.board = null; syncAuthUI();
+      S.board = null; S.adm = null; syncAuthUI();
       if (S.view === "solve") rebuild(true);
       render();
     } catch (e2) { err.hidden = false; err.textContent = e2.message || String(e2); }
@@ -563,6 +694,7 @@
     const b = $("#authBtn");
     if (Store.user) { b.textContent = Store.user.nickname; b.className = "ghost"; }
     else { b.textContent = "로그인"; b.className = "primary"; }
+    $("#adminBtn").hidden = !(Store.user && Store.user.isAdmin);
     const n = $("#notice");
     if (Store.mode === "local") {
       n.hidden = false;

@@ -249,3 +249,35 @@ kbd{font:11px/1 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--pan
   .taggroup .exams{grid-template-columns:repeat(auto-fill,minmax(145px,1fr));gap:10px}
   .panel{padding:14px}
 }
+
+/* ---------- 관리자 화면 ---------- */
+.btn.admin{padding:7px 12px;font-size:13px;background:var(--panel);border-color:var(--line)}
+.btn.admin:hover{border-color:var(--accent);color:var(--accent)}
+.linky{color:var(--accent);text-decoration:none;font-weight:600}
+.linky:hover{text-decoration:underline}
+.bad-t{color:var(--bad)} .ok-t{color:var(--ok)}
+#admScope{margin-bottom:14px}
+
+.wrongrows{display:flex;flex-direction:column}
+.wrongrow{display:grid;grid-template-columns:110px 110px 90px 1fr;gap:10px;align-items:center;
+  padding:8px 6px;border-top:1px solid var(--line);font-size:13px;color:var(--ink-2)}
+.wrongrow:first-child{border-top:none}
+.wr-q{font-weight:700;color:var(--ink)}
+.wr-tags{display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end}
+
+.admq{padding:12px 0;border-top:1px solid var(--line)}
+.admq:first-child{border-top:none;padding-top:2px}
+.admq-head{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+.admq-head .qno{font-size:13.5px}
+.admq-picks{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:8px}
+.pick{display:inline-flex;align-items:baseline;gap:5px;font-size:12.5px;padding:3px 9px;border-radius:999px;
+  border:1px solid var(--line);background:var(--panel-2);color:var(--ink-2);font-variant-numeric:tabular-nums}
+.pick.ok{background:var(--ok-soft);border-color:var(--ok-line);color:var(--ok)}
+.pick.bad{background:var(--bad-soft);border-color:var(--bad-line);color:var(--bad)}
+.pick b{font-weight:700}
+.admq-wrong{margin-top:7px;font-size:12.5px;color:var(--bad)}
+.admq-text{margin-top:6px;font-size:12.5px;color:var(--ink-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+@media (max-width:560px){
+  .wrongrow{grid-template-columns:1fr 1fr;gap:4px}
+  .wr-tags{justify-content:flex-start}
+}

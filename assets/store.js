@@ -68,7 +68,7 @@ window.Store = (function () {
     async adopt(u) {
       if (!u || u.error) throw new Error(msgOf(u ? String(u.error) : "EMPTY"));
       localStorage.setItem(LS_TOKEN, u.token);
-      api.user = { id: u.id, nickname: u.nickname };
+      api.user = { id: u.id, nickname: u.nickname, isAdmin: !!u.is_admin };
       await this.loadRecords();
       return api.user;
     },
@@ -93,6 +93,8 @@ window.Store = (function () {
       });
     },
     board() { return rpc("saa_board", {}); },
+    adminRows() { return rpc("saa_admin_rows", { p_token: localStorage.getItem(LS_TOKEN) }); },
+    adminUsers() { return rpc("saa_admin_users", { p_token: localStorage.getItem(LS_TOKEN) }); },
   };
 
   /* ---------- 로컬 폴백 모드 ---------- */
@@ -110,7 +112,7 @@ window.Store = (function () {
       if (!u) throw new Error("없는 닉네임이에요. '처음이에요 (가입)'을 눌러 주세요.");
       if (u.pin !== pin) throw new Error("PIN이 맞지 않아요.");
       localStorage.setItem(LS_SESSION, norm(nick));
-      api.user = { id: norm(nick), nickname: u.nickname };
+      api.user = { id: norm(nick), nickname: u.nickname, isAdmin: norm(nick) === "admin" };
       api.records = JSON.parse(localStorage.getItem(lsRec(norm(nick))) || "{}");
       return api.user;
     },
@@ -118,13 +120,32 @@ window.Store = (function () {
       const n = localStorage.getItem(LS_SESSION);
       const u = n && this.users()[n];
       if (!u) return null;
-      api.user = { id: n, nickname: u.nickname };
+      api.user = { id: n, nickname: u.nickname, isAdmin: n === "admin" };
       api.records = JSON.parse(localStorage.getItem(lsRec(n)) || "{}");
       return api.user;
     },
     async signOut() { localStorage.removeItem(LS_SESSION); },
     async put() { localStorage.setItem(lsRec(api.user.id), JSON.stringify(api.records)); },
     async board() { return api.user ? [{ nickname: api.user.nickname, solved: 0, correct: 0 }] : []; },
+    async adminRows() {
+      if (!api.user || !api.user.isAdmin) return [];
+      const out = [];
+      const users = this.users();
+      Object.keys(users).forEach((h) => {
+        const recs = JSON.parse(localStorage.getItem(lsRec(h)) || "{}");
+        Object.keys(recs).forEach((qid) => {
+          const r = recs[qid];
+          out.push({ nickname: users[h].nickname, qid, choice: r.choice || null,
+            correct: typeof r.correct === "boolean" ? r.correct : null, bookmarked: !!r.bookmarked, updated_at: null });
+        });
+      });
+      return out;
+    },
+    async adminUsers() {
+      if (!api.user || !api.user.isAdmin) return [];
+      const users = this.users();
+      return Object.keys(users).map((h) => ({ nickname: users[h].nickname, created_at: null, is_admin: h === "admin" }));
+    },
   };
 
   const impl = () => (remote ? cloud : local);
@@ -133,6 +154,8 @@ window.Store = (function () {
   api.signIn = (n, p) => impl().signIn(n, p);
   api.signUp = (n, p) => impl().signUp(n, p);
   api.board = () => impl().board();
+  api.adminRows = () => impl().adminRows();
+  api.adminUsers = () => impl().adminUsers();
   api.signOut = async () => { await impl().signOut(); api.user = null; api.records = {}; };
   api.set = async (qid, rec) => {
     api.records[qid] = Object.assign({}, api.records[qid], rec);

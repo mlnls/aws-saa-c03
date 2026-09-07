@@ -23,6 +23,7 @@
         <button data-lang="en" class="on">EN</button>
         <button data-lang="ko">한글</button>
       </div>
+      <a id="adminBtn" class="btn admin" href="#/admin" hidden>관리자</a>
       <button id="themeBtn" class="ghost" title="테마 전환">🌗</button>
       <button id="authBtn" class="primary">로그인</button>
     </div>
@@ -94,6 +95,43 @@
         <span class="muted">이 세트에서 푼 문제 기준</span>
       </div>
       <div id="dTags"></div>
+    </div>
+  </section>
+
+  <!-- 관리자 화면 -->
+  <section id="admin" hidden>
+    <div class="crumb">
+      <a href="#/" class="backlink">← 세트 목록</a>
+      <h2>관리자</h2>
+      <span class="badge" id="adminNote"></span>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head">
+        <h3>사람별 현황</h3>
+        <span class="muted">이름을 누르면 그 사람이 틀린 문제가 아래에 나옵니다</span>
+      </div>
+      <table class="board"><tbody id="admUsers"></tbody></table>
+    </div>
+
+    <div class="panel" id="admPersonWrap" hidden>
+      <div class="panel-head">
+        <h3 id="admPersonTitle"></h3>
+        <span class="muted">고른 답 / 정답</span>
+      </div>
+      <div id="admPerson"></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head">
+        <h3>문제별 현황</h3>
+        <span class="muted">많이 틀린 문제부터 · 사람들이 고른 선택지 분포</span>
+      </div>
+      <div class="seg wrap" id="admScope" role="group" aria-label="범위">
+        <button data-scope="wrong" class="on">틀린 문제 있는 것만</button>
+        <button data-scope="all">푼 문제 전체</button>
+      </div>
+      <div id="admQuestions"></div>
     </div>
   </section>
 

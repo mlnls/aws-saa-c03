@@ -17,8 +17,12 @@ create table if not exists public.saa_users (
   token        uuid not null default gen_random_uuid(),
   failed       int  not null default 0,
   locked_until timestamptz,
+  is_admin     boolean not null default false,
   created_at   timestamptz not null default now()
 );
+
+-- 이미 만들어진 테이블에도 컬럼 추가 (재실행 안전)
+alter table public.saa_users add column if not exists is_admin boolean not null default false;
 
 -- 풀이 기록: 사람당 문제당 1행
 create table if not exists public.saa_attempts (
@@ -53,7 +57,7 @@ begin
   insert into public.saa_users (handle, nickname, pin_hash)
   values (lower(p_nick), p_nick, extensions.crypt(p_pin, extensions.gen_salt('bf')))
   returning * into v;
-  return json_build_object('id', v.id, 'token', v.token, 'nickname', v.nickname);
+  return json_build_object('id', v.id, 'token', v.token, 'nickname', v.nickname, 'is_admin', v.is_admin);
 end $$;
 
 -- 로그인 (PIN 10회 연속 실패 시 10분 잠금)
@@ -75,7 +79,7 @@ begin
     return json_build_object('error', 'BAD_PIN');
   end if;
   update public.saa_users set failed = 0, locked_until = null where id = v.id;
-  return json_build_object('id', v.id, 'token', v.token, 'nickname', v.nickname);
+  return json_build_object('id', v.id, 'token', v.token, 'nickname', v.nickname, 'is_admin', v.is_admin);
 end $$;
 
 -- 토큰으로 내 정보 조회 (새로고침 시 세션 복구)
@@ -85,7 +89,7 @@ declare v public.saa_users;
 begin
   select * into v from public.saa_users where token = p_token;
   if v.id is null then return null; end if;
-  return json_build_object('id', v.id, 'token', v.token, 'nickname', v.nickname);
+  return json_build_object('id', v.id, 'token', v.token, 'nickname', v.nickname, 'is_admin', v.is_admin);
 end $$;
 
 -- 내 기록 전체
@@ -149,6 +153,28 @@ begin
   delete from public.saa_users where id = v.id;
 end $$;
 
+-- 관리자 전용: 모든 사람의 풀이 기록 (누가 어느 문제에서 무엇을 골랐는지)
+-- 호출자의 토큰이 is_admin 사용자가 아니면 한 행도 반환하지 않는다.
+create or replace function public.saa_admin_rows(p_token uuid)
+returns table (nickname text, qid text, choice text[], correct boolean, bookmarked boolean, updated_at timestamptz)
+language sql security definer set search_path = public as $$
+  select u.nickname, a.qid, a.choice, a.correct, a.bookmarked, a.updated_at
+  from public.saa_attempts a
+  join public.saa_users u on u.id = a.user_id
+  where exists (select 1 from public.saa_users me where me.token = p_token and me.is_admin)
+  order by u.nickname, a.qid;
+$$;
+
+-- 관리자 전용: 가입자 목록 (기록이 없는 사람도 보이도록)
+create or replace function public.saa_admin_users(p_token uuid)
+returns table (nickname text, created_at timestamptz, is_admin boolean)
+language sql security definer set search_path = public as $$
+  select u.nickname, u.created_at, u.is_admin
+  from public.saa_users u
+  where exists (select 1 from public.saa_users me where me.token = p_token and me.is_admin)
+  order by u.created_at;
+$$;
+
 grant execute on function
   public.saa_signup(text, text),
   public.saa_login(text, text),
@@ -157,5 +183,16 @@ grant execute on function
   public.saa_save(uuid, text, text[], boolean, boolean),
   public.saa_reset(uuid),
   public.saa_delete_me(uuid, text),
-  public.saa_board()
+  public.saa_board(),
+  public.saa_admin_rows(uuid),
+  public.saa_admin_users(uuid)
 to anon, authenticated;
+
+-- ⚠️ 관리자 지정
+-- 사이트에서 닉네임 admin 으로 먼저 가입한 뒤, 아래 한 줄을 실행하세요.
+--   update public.saa_users set is_admin = true where handle = 'admin';
+--
+-- PIN 을 바꾸려면 (권장: 6자리보다 길게)
+--   update public.saa_users
+--      set pin_hash = extensions.crypt('새PIN', extensions.gen_salt('bf')), failed = 0, locked_until = null
+--    where handle = 'admin';
