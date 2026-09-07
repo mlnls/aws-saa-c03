@@ -7,7 +7,9 @@
 
   const $ = (s, r = document) => r.querySelector(s);
   const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-  const bold = (s) => esc(s).replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+  const md = (s) => esc(s)
+    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+    .replace(/`([^`]+)`/g, "<code>$1</code>");
 
   const S = {
     lang: localStorage.getItem("saa.lang") || "en",
@@ -125,12 +127,12 @@
 
     const wrongs = q.why_wrong
       ? Object.keys(q.why_wrong).filter((k) => !(q.answer || []).includes(k))
-          .map((k) => `<li><b>${k}</b><span>${bold(txt(q.why_wrong[k]))}</span></li>`).join("")
+          .map((k) => `<li><b>${k}</b><span>${md(txt(q.why_wrong[k]))}</span></li>`).join("")
       : "";
 
     const expl = done ? `<div class="expl">
         <h4>정답 ${(q.answer || []).join(", ")} · 해설</h4>
-        <p>${bold(txt(q.explanation))}</p>
+        <p>${md(txt(q.explanation))}</p>
         ${wrongs ? `<ul class="wrongs">${wrongs}</ul>` : ""}
       </div>` : "";
 

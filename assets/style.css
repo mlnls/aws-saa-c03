@@ -115,6 +115,7 @@ main{max-width:900px;margin:20px auto 60px;padding:0 max(16px,env(safe-area-inse
 .expl p{margin:0 0 10px;white-space:pre-wrap}
 .expl p:last-child{margin-bottom:0}
 .expl strong{font-weight:700}
+.expl code{background:var(--panel);border:1px solid var(--line);font-size:12.5px}
 .wrongs{margin:10px 0 0;padding:0;list-style:none;display:flex;flex-direction:column;gap:6px;font-size:13.5px;color:var(--ink-2)}
 .wrongs li{display:flex;gap:8px}
 .wrongs b{color:var(--ink);min-width:1.2em}
