@@ -35,11 +35,26 @@ create table if not exists public.saa_attempts (
   primary key (user_id, qid)
 );
 
+-- 완료된 실전 시험: 진행 중 답변은 저장하지 않고 제출 시에만 최신 결과를 기록한다.
+create table if not exists public.saa_exam_results (
+  user_id         uuid not null references public.saa_users(id) on delete cascade,
+  exam_id         text not null,
+  started_at      timestamptz not null,
+  finished_at     timestamptz not null,
+  elapsed_seconds integer not null,
+  limit_seconds   integer not null,
+  total           integer not null,
+  correct         integer not null,
+  answers         jsonb not null default '{}'::jsonb,
+  primary key (user_id, exam_id)
+);
+
 -- RLS 켜고 정책은 만들지 않음 → 공개 키(anon)로는 테이블 직접 접근 불가.
 -- 모든 접근은 아래 security definer 함수를 통해서만 가능하다.
 alter table public.saa_users    enable row level security;
 alter table public.saa_attempts enable row level security;
-revoke all on public.saa_users, public.saa_attempts from anon, authenticated;
+alter table public.saa_exam_results enable row level security;
+revoke all on public.saa_users, public.saa_attempts, public.saa_exam_results from anon, authenticated;
 
 -- 가입 / 로그인은 실패를 예외로 던지지 않고 {"error": "..."} 를 반환한다.
 -- (예외를 던지면 트랜잭션이 롤백되어 PIN 실패 카운터가 저장되지 않기 때문)
@@ -115,6 +130,33 @@ begin
         bookmarked = excluded.bookmarked, updated_at = now();
 end $$;
 
+-- 내가 완료한 실전 시험의 최신 결과
+create or replace function public.saa_exam_results(p_token uuid)
+returns setof public.saa_exam_results language sql security definer set search_path = public as $$
+  select r.* from public.saa_exam_results r
+  join public.saa_users u on u.id = r.user_id
+  where u.token = p_token;
+$$;
+
+-- 실전 시험 결과 저장. 전 문항 제출을 마친 뒤 클라이언트가 한 번만 호출한다.
+create or replace function public.saa_save_exam_result(
+  p_token uuid, p_exam_id text, p_started_at timestamptz, p_finished_at timestamptz,
+  p_elapsed_seconds integer, p_limit_seconds integer, p_total integer, p_correct integer, p_answers jsonb)
+returns void language plpgsql security definer set search_path = public as $$
+declare uid uuid;
+begin
+  select id into uid from public.saa_users where token = p_token;
+  if uid is null then raise exception 'BAD_TOKEN'; end if;
+  insert into public.saa_exam_results
+    (user_id, exam_id, started_at, finished_at, elapsed_seconds, limit_seconds, total, correct, answers)
+  values
+    (uid, p_exam_id, p_started_at, p_finished_at, p_elapsed_seconds, p_limit_seconds, p_total, p_correct, p_answers)
+  on conflict (user_id, exam_id) do update
+    set started_at = excluded.started_at, finished_at = excluded.finished_at,
+        elapsed_seconds = excluded.elapsed_seconds, limit_seconds = excluded.limit_seconds,
+        total = excluded.total, correct = excluded.correct, answers = excluded.answers;
+end $$;
+
 -- 같이 푸는 사람들 현황: 닉네임 × 세트별 푼 개수·정답 수.
 -- qid 가 "exam1-12" 형태이므로 첫 '-' 앞부분을 세트 id 로 사용한다.
 -- (세트 id 에는 '-' 를 쓰지 마세요.)  PIN·토큰은 절대 노출되지 않는다.
@@ -140,6 +182,7 @@ begin
   select id into uid from public.saa_users where token = p_token;
   if uid is null then raise exception 'BAD_TOKEN'; end if;
   delete from public.saa_attempts where user_id = uid;
+  delete from public.saa_exam_results where user_id = uid;
 end $$;
 
 -- 계정 삭제 (기록까지 함께 삭제, PIN 재확인)
@@ -181,6 +224,8 @@ grant execute on function
   public.saa_me(uuid),
   public.saa_records(uuid),
   public.saa_save(uuid, text, text[], boolean, boolean),
+  public.saa_exam_results(uuid),
+  public.saa_save_exam_result(uuid, text, timestamptz, timestamptz, integer, integer, integer, integer, jsonb),
   public.saa_reset(uuid),
   public.saa_delete_me(uuid, text),
   public.saa_board(),

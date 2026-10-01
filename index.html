@@ -3,15 +3,20 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#0f1216">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="SAA 공부">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="assets/icons/icon-180.png">
 <title>AWS SAA-C03 문제 모음</title>
 <meta name="description" content="AWS Certified Solutions Architect – Associate (SAA-C03) 문제 모음 및 오답 노트">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>☁️</text></svg>">
-<link rel="stylesheet" href="assets/style.css">
+<link rel="stylesheet" href="assets/style.css?v=20261001-3">
 </head>
 <body>
 <header class="top">
   <div class="top-row">
-    <a class="brand" href="#/" id="brand">
+    <a class="brand" href="#/practice" id="brand">
       <span class="cloud">☁️</span>
       <div>
         <h1>AWS SAA-C03</h1>
@@ -31,6 +36,11 @@
 
   <div class="stats" id="stats"></div>
 
+  <nav class="app-tabs" aria-label="학습 방식">
+    <a id="quizTab" href="#/practice">문제 풀이</a>
+    <a id="workbookTab" href="#/workbook">워크북</a>
+  </nav>
+
   <div class="controls" id="controls" hidden>
     <div class="seg wrap" id="filterSeg" role="group" aria-label="필터">
       <button data-filter="all" class="on">전체</button>
@@ -49,23 +59,37 @@
   <!-- 세트 선택 화면 -->
   <section id="home" hidden>
     <div class="home-head">
-      <h2>어느 세트를 풀까요?</h2>
-      <p>세트를 고르면 진행 상황과 같이 푸는 사람들을 먼저 볼 수 있어요.</p>
+      <h2 id="practiceHomeTitle">유형별 연습</h2>
+      <p id="practiceHomeCopy">AWS 영역을 골라 정답과 해설을 바로 확인하며 연습합니다.</p>
     </div>
-    <div class="exams" id="exams"></div>
-    <div class="panel" id="homeTagsWrap" hidden>
+    <nav class="practice-mode-tabs" aria-label="문제 풀이 모드">
+      <a id="practiceModeTab" href="#/practice"><span>연습</span><b>유형으로 풀기</b><small>문제마다 바로 채점</small></a>
+      <a id="examModeTab" href="#/exams"><span>실전</span><b>시험 세트로 풀기</b><small>시간을 재고 한 번에 제출</small></a>
+    </nav>
+    <div class="panel category-panel" id="practicePanel">
       <div class="panel-head">
-        <h3>분류별 성적</h3>
-        <span class="muted">푼 문제 기준 · 약한 분류가 위로</span>
+        <h3>문제 유형으로 풀기</h3>
+        <span class="muted">전체 문제를 AWS 영역별로 분류</span>
       </div>
-      <div id="homeTags"></div>
+      <div class="category-grid" id="categories"></div>
+    </div>
+    <div id="examPanel" hidden>
+      <div class="exam-mode-note">
+        <b>실전 시험 방식</b>
+        <span>공식 SAA-C03 형식에 맞춰 65문항을 130분 동안 풉니다. 공개된 채점 영역 비율을 65문항에 환산했으며, 중간에 나가면 기록하지 않고 시간이 지나도 계속 풀 수 있습니다.</span>
+      </div>
+      <div class="section-head">
+        <h3>시험 세트 선택</h3>
+        <span class="muted" id="examRange">시험 세트</span>
+      </div>
+      <div class="exams" id="exams"></div>
     </div>
   </section>
 
   <!-- 세트 상세 (시작 전 화면) -->
   <section id="detail" hidden>
     <div class="crumb">
-      <a href="#/" class="backlink">← 세트 목록</a>
+      <a href="#/exams" class="backlink">← 시험 세트</a>
       <h2 id="dTitle"></h2>
       <span class="badge" id="dNote"></span>
     </div>
@@ -89,13 +113,68 @@
       <table class="board"><tbody id="dBoardBody"></tbody></table>
     </div>
 
-    <div class="panel" id="dTagsWrap" hidden>
-      <div class="panel-head">
-        <h3>분류별 성적</h3>
-        <span class="muted">이 세트에서 푼 문제 기준</span>
-      </div>
-      <div id="dTags"></div>
+  </section>
+
+  <!-- 실전 시험 결과 리포트 -->
+  <section id="report" hidden>
+    <div class="crumb">
+      <a href="#/exams" class="backlink" id="rBack">← 시험 세트</a>
+      <h2 id="rTitle"></h2>
+      <span class="badge">결과 리포트</span>
     </div>
+    <div class="panel report-hero" id="rHero"></div>
+    <div class="report-grid">
+      <div class="panel">
+        <div class="panel-head"><h3>영역별 결과</h3><span class="muted">SAA-C03 공식 도메인 기준</span></div>
+        <div id="rDomains"></div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><h3>자주 틀린 주제</h3><span class="muted">누르면 아래 목록이 그 주제로 좁혀져요</span></div>
+        <div id="rTags"></div>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="panel-head"><h3>문항 지도</h3><span class="muted">번호를 누르면 해당 문제로 이동</span></div>
+      <div class="report-map" id="rMap"></div>
+    </div>
+    <div class="report-listhead">
+      <h3>문제 다시 보기</h3>
+      <div class="seg" id="rFilter"></div>
+      <span class="report-tagfilter" id="rTagFilter" hidden></span>
+    </div>
+    <div class="report-list" id="rList"></div>
+  </section>
+
+  <!-- 순서대로 공부하는 워크북 -->
+  <section id="workbook" hidden>
+    <div class="workbook-hero">
+      <div>
+        <span class="eyebrow">29-DAY STUDY ROUTINE</span>
+        <h2>AWS SAA-C03 29일 공부계획</h2>
+        <p>AWS 공식 문서를 바탕으로 서비스를 먼저 이해하고, 관련 기출로 설계 판단을 확인합니다.</p>
+      </div>
+      <div class="workbook-total" id="workbookTotal"></div>
+    </div>
+    <div class="section-head workbook-section-head">
+      <div>
+        <h3>주차별 학습 일정</h3>
+        <span class="muted">S3부터 통합 아키텍처까지 서비스 순서대로 공부합니다.</span>
+      </div>
+      <button class="ghost" id="workbookReset" type="button">진도 초기화</button>
+    </div>
+    <div class="workbook-days" id="workbookDays"></div>
+  </section>
+
+  <section id="workbookDay" hidden>
+    <div class="crumb workbook-day-crumb">
+      <a href="#/workbook" class="backlink">← 워크북</a>
+      <h2 id="workbookDayTitle"></h2>
+      <span class="badge" id="workbookDayRange"></span>
+    </div>
+    <div class="workbook-day-summary" id="workbookDaySummary"></div>
+    <div class="workbook-day-toolbar"><span class="muted">공식 문서 기반 이론을 먼저 읽고, 단락 사이의 관련 기출로 복습하세요.</span></div>
+    <div class="workbook-lessons" id="workbookLessons"></div>
+    <div class="workbook-day-nav" id="workbookDayNav"></div>
   </section>
 
   <!-- 관리자 화면 -->
@@ -141,17 +220,52 @@
       <a href="#/" class="backlink" id="solveBack">← 세트 목록</a>
       <h2 id="examTitle"></h2>
       <span class="badge" id="examNote"></span>
+      <button class="question-drawer-toggle" id="qnavToggle" type="button" aria-controls="questionDrawer" aria-expanded="false">
+        <span aria-hidden="true">☷</span> 문제 목록 <b id="qnavPosition"></b>
+      </button>
     </div>
-    <div class="qnav" id="qnav"></div>
+    <div class="timed-exam-bar" id="timedExamBar" hidden>
+      <div class="timed-exam-clock">
+        <span>실전 타이머</span>
+        <b id="examTimer">00:00</b>
+        <small id="examTimerNote">남은 시간</small>
+      </div>
+      <div class="timed-exam-progress">
+        <span id="examAnswered">0 / 0 답변</span>
+        <button class="primary" id="finishExam" type="button">시험 제출</button>
+        <small id="examFinishHint">모든 문제에 답하면 제출할 수 있습니다.</small>
+      </div>
+    </div>
+    <div class="question-drawer-backdrop" id="qnavBackdrop" hidden></div>
+    <aside class="question-drawer" id="questionDrawer" aria-hidden="true" aria-label="문제 목록">
+      <div class="question-drawer-head">
+        <div>
+          <h3>문제 목록</h3>
+          <p id="qnavSummary"></p>
+        </div>
+        <button class="iconbtn question-drawer-close" id="qnavClose" type="button" aria-label="문제 목록 닫기">✕</button>
+      </div>
+      <div class="qnav-legend" id="qnavLegend" aria-label="문제 상태 범례">
+        <span><i class="idle"></i>미풀이</span><span><i class="ok"></i>정답</span><span><i class="bad"></i>오답</span><span>★ 북마크</span>
+      </div>
+      <div class="qnav-scroll"><div class="qnav" id="qnav"></div></div>
+    </aside>
     <div id="list" class="list"></div>
     <div class="pager" id="pager"></div>
     <div id="empty" class="empty" hidden>조건에 맞는 문제가 없어요.</div>
-    <p class="keyhint">키보드: <kbd>A</kbd>~<kbd>D</kbd> 또는 <kbd>1</kbd>~<kbd>4</kbd> 선택 · <kbd>Enter</kbd> 확인/다음 · <kbd>←</kbd><kbd>→</kbd> 이동</p>
+    <p class="keyhint" id="keyhint">키보드: <kbd>A</kbd>~<kbd>D</kbd> 또는 <kbd>1</kbd>~<kbd>4</kbd> 선택 · <kbd>Enter</kbd> 확인/다음 · <kbd>←</kbd><kbd>→</kbd> 이동</p>
   </section>
 </main>
 
 <footer class="foot">
+  <div class="pwa-panel" id="pwaPanel">
+    <div><b>홈 화면에서 바로 공부하기</b><p id="pwaMessage"></p></div>
+    <button type="button" id="pwaInstall" class="primary" hidden>앱 설치</button>
+  </div>
+  <p class="pwa-status" id="pwaStatus" role="status"></p>
   <span id="modeTag"></span>
+  <span><a href="toeic.html">TOEIC 3주 워크북</a></span>
+  <span><a href="coding.html">코딩 테스트 3주 워크북</a></span>
   <span>문제 추가는 <code>data/exam*.js</code> · <a href="https://github.com/mlnls/aws-saa-c03" target="_blank" rel="noopener">repo</a></span>
 </footer>
 
@@ -177,7 +291,27 @@
 <script src="assets/config.js"></script>
 <!-- 문제 세트: 새 세트를 추가하면 파일을 만들고 여기에 한 줄 추가 -->
 <script src="data/exam1.js"></script>
-<script src="assets/store.js"></script>
-<script src="assets/app.js"></script>
+<script src="data/exam2.js"></script>
+<script src="data/exam3.js"></script>
+<script src="data/exam4.js"></script>
+<script src="data/exam5.js"></script>
+<script src="data/exam6.js"></script>
+<script src="data/exam7.js"></script>
+<script src="data/exam8.js?v=20260909-2"></script>
+<script src="data/exam9.js?v=20260909-2"></script>
+<script src="data/exam10.js?v=20260909-2"></script>
+<script src="data/exam11.js?v=20260909-2"></script>
+<script src="data/exam12.js?v=20260910-8"></script>
+<script src="data/exam13.js?v=20260910-1"></script>
+<script src="data/exam14.js?v=20260910-1"></script>
+<script src="data/exam15.js?v=20260910-1"></script>
+<script src="data/mock-exams.js?v=20260910-1"></script>
+<script src="data/study.js?v=20260911-2"></script>
+<script src="data/study-visuals.js?v=20260911-1"></script>
+<script src="data/study-intros.js?v=20260911-1"></script>
+<script src="data/study-hooks.js?v=20261001-1"></script>
+<script src="assets/store.js?v=20260910-2"></script>
+<script src="assets/app.js?v=20261001-3"></script>
+<script src="assets/pwa.js?v=20260911-1"></script>
 </body>
 </html>

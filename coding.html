@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#11131a">
+  <title>코딩 테스트 3주 학습 워크북</title>
+  <meta name="description" content="자료구조와 알고리즘 패턴을 순서대로 공부하는 3주 코딩 테스트 워크북">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💻</text></svg>">
+  <link rel="stylesheet" href="assets/toeic.css?v=20260915-1">
+  <link rel="stylesheet" href="assets/coding.css?v=20260915-2">
+</head>
+<body class="coding-page">
+  <header class="toeic-top">
+    <a class="toeic-brand" href="#/plan"><span>CODE</span><b>코딩 테스트 워크북</b></a>
+    <nav aria-label="주요 메뉴">
+      <a href="#/plan" data-route="plan">공부 계획</a>
+      <a href="#/today" data-route="today">오늘 학습</a>
+      <a href="toeic.html">TOEIC</a>
+      <a href="index.html">AWS</a>
+    </nav>
+    <button id="themeToggle" type="button" aria-label="화면 테마 전환">◐</button>
+  </header>
+
+  <main>
+    <section id="planView">
+      <div class="hero code-hero">
+        <div>
+          <span class="eyebrow">ALGORITHM · DATA STRUCTURE · PROBLEM SOLVING</span>
+          <h1>풀이를 외우지 않고<br><em>문제에서 패턴을 꺼내는 힘</em>부터</h1>
+          <p>제약 조건으로 가능한 복잡도를 정하고, 입력 구조에서 알고리즘 패턴을 고른 뒤, 작은 예제로 검증하는 과정을 반복합니다.</p>
+          <div class="hero-actions"><a class="primary-link" id="continueButton" href="#/day/1">Day 1 시작</a><a href="#method">풀이 순서 보기</a></div>
+        </div>
+        <div class="score-ring" id="scoreRing" aria-label="학습 진도"><strong>0%</strong><span>완료한 학습</span></div>
+      </div>
+
+      <section class="format method" id="method">
+        <div class="section-title"><div><span class="eyebrow">PROBLEM SOLVING LOOP</span><h2>코딩 테스트는 구현 전에 절반이 결정됩니다</h2></div><a href="https://ocw.mit.edu/courses/6-006-introduction-to-algorithms-fall-2011/" target="_blank" rel="noopener">MIT 알고리즘 자료 ↗</a></div>
+        <p class="format-lead">문제를 읽자마자 코드를 쓰기보다 입력 크기와 원하는 결과를 먼저 정리합니다. 이 과정이 완전 탐색, 해시, 그래프, 동적 계획법 중 무엇을 쓸지 결정합니다.</p>
+        <div class="solve-pipeline" aria-label="문제 해결 순서">
+          <div><i>01</i><b>요구사항</b><small>무엇을 반환할까?</small></div><span>→</span>
+          <div><i>02</i><b>제약 조건</b><small>허용 복잡도는?</small></div><span>→</span>
+          <div><i>03</i><b>패턴 선택</b><small>어떤 자료구조?</small></div><span>→</span>
+          <div><i>04</i><b>검증</b><small>경계값과 반례</small></div>
+        </div>
+        <div class="complexity-grid">
+          <article><span>n ≤ 20</span><b>완전 탐색 후보</b><small>부분집합·백트래킹</small></article>
+          <article><span>n ≤ 1,000</span><b>O(n²) 검토</b><small>이중 반복·DP</small></article>
+          <article><span>n ≤ 100,000</span><b>O(n log n)</b><small>정렬·힙·이분 탐색</small></article>
+          <article><span>n ≥ 1,000,000</span><b>O(n) 중심</b><small>해시·투 포인터</small></article>
+        </div>
+        <p class="method-note">복잡도 기준은 언어와 연산 종류, 제한 시간에 따라 달라지는 출발점입니다. 실제 문제에서는 반드시 제약 조건과 실행 환경을 함께 봅니다.</p>
+      </section>
+
+      <div class="schedule-head"><div><span class="eyebrow">21-DAY PLAN</span><h2>주차별 학습 일정</h2><p>하루 45~70분, 개념과 Python 예시를 본 뒤 확인 문제를 풀어 완료합니다.</p></div><button id="resetProgress" type="button">진도 초기화</button></div>
+      <div id="weekTabs" class="week-tabs" role="tablist" aria-label="주차 선택"></div>
+      <div id="dayGrid" class="day-grid"></div>
+    </section>
+
+    <section id="dayView" hidden>
+      <div class="day-topline"><a href="#/plan">← 3주 계획</a><span id="dayPosition"></span></div>
+      <div id="dayContent"></div>
+    </section>
+  </main>
+  <footer><span>개인 학습용 코딩 테스트 워크북 · 예시는 Python 3</span><span>이론 참고: MIT OpenCourseWare · Python 공식 문서</span></footer>
+  <script src="assets/coding.js?v=20260915-2"></script>
+</body>
+</html>

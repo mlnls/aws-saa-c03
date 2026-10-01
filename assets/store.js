@@ -11,13 +11,20 @@ window.Store = (function () {
   const LS_USERS = "saa.users";
   const LS_SESSION = "saa.session";
   const lsRec = (n) => "saa.rec." + n;
+  const lsAttempts = (n) => "saa.exam.attempts." + n;
 
   const api = {
     mode: remote ? "supabase" : "local",
     user: null,      // {id, nickname}
     records: {},     // qid -> {choice:[], correct:bool, bookmarked:bool}
+    examAttempts: {}, // examId -> 완료한 실전 시험 기록[]
   };
   const norm = (n) => String(n || "").trim().toLowerCase();
+  function loadLocalExamAttempts() {
+    if (!api.user) { api.examAttempts = {}; return; }
+    try { api.examAttempts = JSON.parse(localStorage.getItem(lsAttempts(api.user.id)) || "{}"); }
+    catch (_) { api.examAttempts = {}; }
+  }
 
   /* ---------- 서버 모드 ---------- */
   async function rpc(fn, args) {
@@ -70,6 +77,21 @@ window.Store = (function () {
       localStorage.setItem(LS_TOKEN, u.token);
       api.user = { id: u.id, nickname: u.nickname, isAdmin: !!u.is_admin };
       await this.loadRecords();
+      try {
+        const attempts = await rpc("saa_exam_results", { p_token: localStorage.getItem(LS_TOKEN) });
+        api.examAttempts = {};
+        (attempts || []).forEach((row) => {
+          api.examAttempts[row.exam_id] = [{
+            startedAt: new Date(row.started_at).getTime(),
+            finishedAt: new Date(row.finished_at).getTime(),
+            elapsedSeconds: Number(row.elapsed_seconds),
+            limitSeconds: Number(row.limit_seconds),
+            total: Number(row.total),
+            correct: Number(row.correct),
+            answers: row.answers || {},
+          }];
+        });
+      } catch (_) { loadLocalExamAttempts(); }
       return api.user;
     },
     async signUp(nick, pin) { return this.adopt(await rpc("saa_signup", { p_nick: nick, p_pin: pin })); },
@@ -114,6 +136,7 @@ window.Store = (function () {
       localStorage.setItem(LS_SESSION, norm(nick));
       api.user = { id: norm(nick), nickname: u.nickname, isAdmin: norm(nick) === "admin" };
       api.records = JSON.parse(localStorage.getItem(lsRec(norm(nick))) || "{}");
+      loadLocalExamAttempts();
       return api.user;
     },
     async restore() {
@@ -122,6 +145,7 @@ window.Store = (function () {
       if (!u) return null;
       api.user = { id: n, nickname: u.nickname, isAdmin: n === "admin" };
       api.records = JSON.parse(localStorage.getItem(lsRec(n)) || "{}");
+      loadLocalExamAttempts();
       return api.user;
     },
     async signOut() { localStorage.removeItem(LS_SESSION); },
@@ -156,11 +180,38 @@ window.Store = (function () {
   api.board = () => impl().board();
   api.adminRows = () => impl().adminRows();
   api.adminUsers = () => impl().adminUsers();
-  api.signOut = async () => { await impl().signOut(); api.user = null; api.records = {}; };
+  api.signOut = async () => { await impl().signOut(); api.user = null; api.records = {}; api.examAttempts = {}; };
   api.set = async (qid, rec) => {
     api.records[qid] = Object.assign({}, api.records[qid], rec);
     if (!api.user) return;
     try { await impl().put(qid); } catch (e) { console.error("저장 실패:", e.message || e); }
+  };
+  api.saveExamAttempt = async (examId, attempt) => {
+    if (!api.user) return false;
+    const list = Array.isArray(api.examAttempts[examId]) ? api.examAttempts[examId].slice() : [];
+    list.unshift(attempt);
+    api.examAttempts[examId] = list.slice(0, 10);
+    localStorage.setItem(lsAttempts(api.user.id), JSON.stringify(api.examAttempts));
+    if (remote) {
+      try {
+        await rpc("saa_save_exam_result", {
+          p_token: localStorage.getItem(LS_TOKEN),
+          p_exam_id: examId,
+          p_started_at: new Date(attempt.startedAt).toISOString(),
+          p_finished_at: new Date(attempt.finishedAt).toISOString(),
+          p_elapsed_seconds: attempt.elapsedSeconds,
+          p_limit_seconds: attempt.limitSeconds,
+          p_total: attempt.total,
+          p_correct: attempt.correct,
+          p_answers: attempt.answers,
+        });
+      } catch (e) { console.warn("실전 시험 기록은 이 브라우저에 저장했습니다:", e.message || e); }
+    }
+    return true;
+  };
+  api.latestExamAttempt = (examId) => {
+    const list = api.examAttempts[examId];
+    return Array.isArray(list) && list.length ? list[0] : null;
   };
   return api;
 })();

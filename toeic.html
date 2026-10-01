@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#101714">
+  <title>TOEIC 3주 학습 워크북</title>
+  <meta name="description" content="LC와 RC 개념부터 파트별 풀이법까지 순서대로 공부하는 3주 TOEIC 워크북">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📗</text></svg>">
+  <link rel="stylesheet" href="assets/toeic.css?v=20260915-1">
+</head>
+<body>
+  <header class="toeic-top">
+    <a class="toeic-brand" href="#/plan"><span>TOEIC</span><b>3주 학습 워크북</b></a>
+    <nav aria-label="주요 메뉴">
+      <a href="#/plan" data-route="plan">공부 계획</a>
+      <a href="#/today" data-route="today">오늘 학습</a>
+      <a href="index.html">AWS</a>
+      <a href="coding.html">코테</a>
+    </nav>
+    <button id="themeToggle" type="button" aria-label="화면 테마 전환">◐</button>
+  </header>
+
+  <main>
+    <section id="planView">
+      <div class="hero">
+        <div>
+          <span class="eyebrow">LISTENING · READING ROUTINE</span>
+          <h1>문제부터 풀지 않고<br><em>영어가 들리고 읽히는 구조</em>부터</h1>
+          <p>LC의 소리 단서와 RC의 문장 구조를 먼저 이해한 뒤, 매일 한 개의 짧은 확인 문제로 적용합니다.</p>
+          <div class="hero-actions"><a class="primary-link" id="continueButton" href="#/day/1">Day 1 시작</a><a href="#format">시험 구성 보기</a></div>
+        </div>
+        <div class="score-ring" id="scoreRing" aria-label="학습 진도"><strong>0%</strong><span>완료한 학습</span></div>
+      </div>
+
+      <section class="format" id="format">
+        <div class="section-title"><div><span class="eyebrow">OFFICIAL FORMAT</span><h2>TOEIC L&amp;R은 무엇을 보는 시험인가</h2></div><a href="https://www.ets.org/toeic/about/listening-reading.html" target="_blank" rel="noopener">ETS 공식 안내 ↗</a></div>
+        <p class="format-lead">업무 상황에서 들은 영어와 읽은 영어를 얼마나 정확히 이해하는지 측정합니다. 총 200문항이며 Listening 100문항은 45분, Reading 100문항은 75분입니다.</p>
+        <div class="format-flow" aria-label="TOEIC 시험 구성">
+          <article class="listen"><span>45분 · 100문항</span><h3>🎧 Listening</h3><p>사진 → 응답 → 대화 → 담화</p><small>들리는 모든 단어보다 화자·목적·다음 행동을 잡습니다.</small></article>
+          <div class="flow-arrow">→</div>
+          <article class="read"><span>75분 · 100문항</span><h3>📄 Reading</h3><p>문장 → 문맥 → 지문</p><small>품사와 문장 뼈대를 빠르게 찾고 필요한 정보를 선별합니다.</small></article>
+        </div>
+        <div class="part-strip">
+          <span>P1 사진</span><span>P2 질의응답</span><span>P3 대화</span><span>P4 담화</span><span>P5 문장</span><span>P6 문맥</span><span>P7 독해</span>
+        </div>
+      </section>
+
+      <div class="schedule-head"><div><span class="eyebrow">21-DAY PLAN</span><h2>주차별 학습 일정</h2><p>하루 35~60분, 개념을 읽고 확인 문제를 맞히면 완료됩니다.</p></div><button id="resetProgress" type="button">진도 초기화</button></div>
+      <div id="weekTabs" class="week-tabs" role="tablist" aria-label="주차 선택"></div>
+      <div id="dayGrid" class="day-grid"></div>
+    </section>
+
+    <section id="dayView" hidden>
+      <div class="day-topline"><a href="#/plan">← 3주 계획</a><span id="dayPosition"></span></div>
+      <div id="dayContent"></div>
+    </section>
+  </main>
+
+  <footer><span>개인 학습용 TOEIC 워크북</span><span>시험 형식 출처: ETS TOEIC Listening &amp; Reading</span></footer>
+  <script src="assets/toeic.js?v=20260915-1"></script>
+</body>
+</html>
