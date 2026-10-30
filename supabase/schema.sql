@@ -49,6 +49,13 @@ create table if not exists public.saa_exam_results (
   primary key (user_id, exam_id)
 );
 
+-- 사이트 설정 (예: key='midterm' → {"open": true, "opened_at": ...})
+create table if not exists public.saa_settings (
+  key        text primary key,
+  value      jsonb not null default '{}'::jsonb,
+  updated_at timestamptz not null default now()
+);
+
 -- RLS 켜고 정책은 만들지 않음 → 공개 키(anon)로는 테이블 직접 접근 불가.
 -- 모든 접근은 아래 security definer 함수를 통해서만 가능하다.
 alter table public.saa_users    enable row level security;
@@ -74,7 +81,15 @@ create unique index if not exists saa_exam_attempts_once on public.saa_exam_atte
 alter table public.saa_exam_attempts enable row level security;
 revoke all on public.saa_exam_attempts from anon, authenticated;
 
-revoke all on public.saa_users, public.saa_attempts, public.saa_exam_results from anon, authenticated;
+alter table public.saa_settings enable row level security;
+revoke all on public.saa_users, public.saa_attempts, public.saa_exam_results, public.saa_settings from anon, authenticated;
+
+-- 복구: 2026-10-30 브랜치판 schema.sql 을 실행했다면 그사이 제출은 saa_exam_results 에 들어갔다. 이력으로 옮긴다.
+insert into public.saa_exam_attempts
+  (user_id, exam_id, started_at, finished_at, elapsed_seconds, limit_seconds, total, correct, answers)
+select user_id, exam_id, started_at, finished_at, elapsed_seconds, limit_seconds, total, correct, answers
+from public.saa_exam_results
+on conflict do nothing;
 
 -- 가입 / 로그인은 실패를 예외로 던지지 않고 {"error": "..."} 를 반환한다.
 -- (예외를 던지면 트랜잭션이 롤백되어 PIN 실패 카운터가 저장되지 않기 때문)
@@ -176,6 +191,10 @@ begin
   if adm then raise exception 'ADMIN_READONLY'; end if;
   if p_exam_id !~ '^[A-Za-z0-9_-]{1,40}$' then raise exception 'BAD_KEY'; end if;
   if length(coalesce(p_answers, '{}'::jsonb)::text) > 65536 then raise exception 'TOO_BIG'; end if;
+  -- 중간 평가(mock7)는 한 번만 응시: 이미 제출했으면 새 결과를 받지 않는다.
+  if p_exam_id = 'mock7' and exists (select 1 from public.saa_exam_attempts where user_id = uid and exam_id = 'mock7') then
+    return;
+  end if;
   insert into public.saa_exam_attempts
     (user_id, exam_id, started_at, finished_at, elapsed_seconds, limit_seconds, total, correct, answers)
   values
@@ -353,6 +372,27 @@ language sql security definer set search_path = public as $$
   where s.key = 'exam.paused' and not u.is_admin and exists (select 1 from me) and jsonb_typeof(p.value) = 'object'
     and not exists (select 1 from public.saa_exam_attempts a where a.user_id = s.user_id and a.exam_id = p.key);
 $$;
+-- 중간 평가 잠금 상태 (누구나 조회). 관리자가 열기 전까지 open = false.
+create or replace function public.saa_midterm_state()
+returns json language sql security definer set search_path = public as $$
+  select json_build_object(
+    'open', coalesce((select (value->>'open')::boolean from public.saa_settings where key = 'midterm'), false),
+    'opened_at', (select value->>'opened_at' from public.saa_settings where key = 'midterm'));
+$$;
+
+-- 관리자 전용: 중간 평가 열기 / 다시 잠그기
+create or replace function public.saa_admin_set_midterm(p_token uuid, p_open boolean)
+returns json language plpgsql security definer set search_path = public as $$
+begin
+  if not exists (select 1 from public.saa_users where token = p_token and is_admin) then
+    raise exception 'NOT_ADMIN';
+  end if;
+  insert into public.saa_settings (key, value, updated_at)
+  values ('midterm', json_build_object('open', p_open, 'opened_at', case when p_open then now() end)::jsonb, now())
+  on conflict (key) do update set value = excluded.value, updated_at = now();
+  return public.saa_midterm_state();
+end $$;
+
 grant execute on function
   public.saa_signup(text, text),
   public.saa_login(text, text),
@@ -370,7 +410,9 @@ grant execute on function
   public.saa_board(),
   public.saa_admin_rows(uuid),
   public.saa_admin_users(uuid),
-  public.saa_admin_exams(uuid)
+  public.saa_admin_exams(uuid),
+  public.saa_midterm_state(),
+  public.saa_admin_set_midterm(uuid, boolean)
 to anon, authenticated;
 
 -- ⚠️ 관리자 지정

@@ -15,12 +15,14 @@ window.Store = (function () {
   const lsState = (id) => "saa.state." + id;
   const lsStatePending = (id) => "saa.state.pending." + id; // 아직 서버에 못 보낸 key
   const lsStateSynced = (id) => "saa.state.synced." + id;   // 서버 상태를 한 번이라도 받아왔는지
+  const LS_MIDTERM = "saa.midterm";
 
   const api = {
     mode: remote ? "supabase" : "local",
     user: null,      // {id, nickname}
     records: {},     // qid -> {choice:[], correct:bool, bookmarked:bool}
     examAttempts: {}, // examId -> 완료한 실전 시험 기록[]
+    midterm: { open: false, opened_at: null }, // 관리자가 열어야 중간 평가를 시작할 수 있다
     state: {},        // 계정에 묶인 학습 상태: key -> 값 (exam.paused, study.read, study.answers)
   };
   let stateRemote = false;   // 서버에 saa_state 함수가 있는지
@@ -84,6 +86,7 @@ window.Store = (function () {
     if (/NO_USER/.test(raw)) return "없는 닉네임이에요. '처음이에요 (가입)'을 눌러 주세요.";
     if (/BAD_PIN/.test(raw)) return "PIN이 맞지 않아요.";
     if (/LOCKED/.test(raw)) return "PIN을 여러 번 틀려서 잠시 잠겼어요. 10분 뒤에 다시 시도해 주세요.";
+    if (/NOT_ADMIN/.test(raw)) return "관리자만 할 수 있어요.";
     if (/BAD_TOKEN/.test(raw)) return "세션이 만료됐어요. 다시 로그인해 주세요.";
     if (/^EMPTY$/.test(raw)) return "서버 응답이 비어 있어요. 잠시 후 다시 시도해 주세요.";
     if (/saa_signup|saa_login|Could not find the function|PGRST202/.test(raw))
@@ -208,6 +211,8 @@ window.Store = (function () {
     adminRows() { return rpc("saa_admin_rows", { p_token: localStorage.getItem(LS_TOKEN) }); },
     adminUsers() { return rpc("saa_admin_users", { p_token: localStorage.getItem(LS_TOKEN) }); },
     adminExams() { return rpc("saa_admin_exams", { p_token: localStorage.getItem(LS_TOKEN) }); },
+    midtermState() { return rpc("saa_midterm_state", {}); },
+    setMidterm(open) { return rpc("saa_admin_set_midterm", { p_token: localStorage.getItem(LS_TOKEN), p_open: open }); },
   };
 
   /* ---------- 로컬 폴백 모드 ---------- */
@@ -262,6 +267,34 @@ window.Store = (function () {
       if (!api.user || !api.user.isAdmin) return [];
       const users = this.users();
       return Object.keys(users).map((h) => ({ nickname: users[h].nickname, created_at: null, is_admin: h === "admin" }));
+    },
+    // saa_admin_exams 와 같은 모양 (제출한 시험의 첫 응시만)
+    async adminExams() {
+      if (!api.user || !api.user.isAdmin) return [];
+      const out = [];
+      const users = this.users();
+      Object.keys(users).forEach((h) => {
+        let byExam = {};
+        try { byExam = JSON.parse(localStorage.getItem(lsAttempts(h)) || "{}"); } catch (_) {}
+        Object.keys(byExam).forEach((examId) => {
+          const list = byExam[examId] || [];
+          const a = list[list.length - 1];
+          if (!a) return;
+          out.push({ nickname: users[h].nickname, exam_id: examId, status: "done", answers: a.answers || {},
+            correct: a.correct, total: a.total, at: new Date(a.finishedAt).toISOString() });
+        });
+      });
+      return out;
+    },
+    async midtermState() {
+      try { return JSON.parse(localStorage.getItem(LS_MIDTERM) || "null") || { open: false }; }
+      catch (_) { return { open: false }; }
+    },
+    async setMidterm(open) {
+      if (!api.user || !api.user.isAdmin) throw new Error("관리자만 할 수 있어요.");
+      const v = { open, opened_at: open ? new Date().toISOString() : null };
+      localStorage.setItem(LS_MIDTERM, JSON.stringify(v));
+      return v;
     },
   };
 
@@ -410,6 +443,16 @@ window.Store = (function () {
   api.adminRows = () => impl().adminRows();
   api.adminUsers = () => impl().adminUsers();
   api.adminExams = () => (impl().adminExams ? impl().adminExams() : Promise.resolve([]));
+  // 함수가 아직 없으면(스키마 미실행) 잠긴 상태로 본다.
+  api.loadMidterm = async () => {
+    try { api.midterm = Object.assign({ open: false, opened_at: null }, await impl().midtermState()); }
+    catch (e) { console.warn("중간 평가 상태 조회 실패:", e.message || e); api.midterm = { open: false, opened_at: null }; }
+    return api.midterm;
+  };
+  api.setMidterm = async (open) => {
+    api.midterm = Object.assign({ open: false, opened_at: null }, await impl().setMidterm(open));
+    return api.midterm;
+  };
   api.signOut = async () => {
     await flushPauses(false);
     await flushState(false);
