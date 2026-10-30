@@ -11,7 +11,7 @@
 <title>AWS SAA-C03 문제 모음</title>
 <meta name="description" content="AWS Certified Solutions Architect – Associate (SAA-C03) 문제 모음 및 오답 노트">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>☁️</text></svg>">
-<link rel="stylesheet" href="assets/style.css?v=20261001-3">
+<link rel="stylesheet" href="assets/style.css?v=20261030-2">
 </head>
 <body>
 <header class="top">
@@ -188,15 +188,24 @@
     <div class="panel">
       <div class="panel-head">
         <h3>사람별 현황</h3>
-        <span class="muted">이름을 누르면 그 사람이 틀린 문제가 아래에 나옵니다</span>
+        <span class="muted">이름을 누르면 그 사람의 오답노트가 아래에 나옵니다</span>
       </div>
       <table class="board"><tbody id="admUsers"></tbody></table>
+    </div>
+
+    <div class="panel" id="admMidtermWrap" hidden>
+      <div class="panel-head">
+        <h3 id="admMidtermTitle">중간 평가 결과</h3>
+        <span class="muted">점수 높은 순 · 이름을 누르면 오답노트</span>
+      </div>
+      <div class="adm-midterm-ctl" id="admMidtermCtl"></div>
+      <table class="board"><tbody id="admMidterm"></tbody></table>
     </div>
 
     <div class="panel" id="admPersonWrap" hidden>
       <div class="panel-head">
         <h3 id="admPersonTitle"></h3>
-        <span class="muted">고른 답 / 정답</span>
+        <span class="muted">실전 시험 · 연습별 틀린 문제 / 고른 답 / 정답</span>
       </div>
       <div id="admPerson"></div>
     </div>
@@ -310,8 +319,8 @@
 <script src="data/study-visuals.js?v=20260911-1"></script>
 <script src="data/study-intros.js?v=20260911-1"></script>
 <script src="data/study-hooks.js?v=20261001-1"></script>
-<script src="assets/store.js?v=20260910-2"></script>
-<script src="assets/app.js?v=20261001-3"></script>
+<script src="assets/store.js?v=20261030-2"></script>
+<script src="assets/app.js?v=20261030-2"></script>
 <script src="assets/pwa.js?v=20260911-1"></script>
 </body>
 </html>
