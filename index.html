@@ -11,7 +11,7 @@
 <title>AWS SAA-C03 문제 모음</title>
 <meta name="description" content="AWS Certified Solutions Architect – Associate (SAA-C03) 문제 모음 및 오답 노트">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>☁️</text></svg>">
-<link rel="stylesheet" href="assets/style.css?v=20261001-3">
+<link rel="stylesheet" href="assets/style.css?v=20261016-1">
 </head>
 <body>
 <header class="top">
@@ -39,6 +39,8 @@
   <nav class="app-tabs" aria-label="학습 방식">
     <a id="quizTab" href="#/practice">문제 풀이</a>
     <a id="workbookTab" href="#/workbook">워크북</a>
+    <a id="cardsTab" href="cards.html">플래시카드</a>
+    <a id="wrongTab" href="wrong.html">오답노트</a>
   </nav>
 
   <div class="controls" id="controls" hidden>
@@ -123,6 +125,7 @@
       <span class="badge">결과 리포트</span>
     </div>
     <div class="panel report-hero" id="rHero"></div>
+    <div class="panel report-export" id="rExport"></div>
     <div class="report-grid">
       <div class="panel">
         <div class="panel-head"><h3>영역별 결과</h3><span class="muted">SAA-C03 공식 도메인 기준</span></div>
@@ -177,12 +180,50 @@
     <div class="workbook-day-nav" id="workbookDayNav"></div>
   </section>
 
+  <!-- 관리자: 같이 오답 리뷰 -->
+  <section id="review" hidden>
+    <div class="crumb">
+      <a href="#/admin" class="backlink">← 관리자</a>
+      <h2 id="rvTitle">같이 오답 리뷰</h2>
+    </div>
+    <div class="rv-tools">
+      <div class="seg" role="group" aria-label="범위">
+        <button id="rvOnlyWrong" class="on">틀린 사람 있는 문제만</button>
+        <button id="rvAll">전체 문제</button>
+      </div>
+<div class="seg rv-names" role="group" aria-label="누가 골랐는지 표시">
+        <button data-names="show" class="on" title="선택지 옆에 고른 사람 이름 표시">이름 보기</button>
+        <button data-names="after" title="정답을 공개한 뒤에만 이름 표시">공개 후 보기</button>
+        <button data-names="hide" title="이름 없이 인원수만">블라인드</button>
+      </div>
+      <label id="rvPausedWrap" class="rv-check"><input type="checkbox" id="rvPaused" checked> 아직 푸는 중인 사람 답도 포함</label>
+      <label class="rv-check"><input type="checkbox" id="rvAlways"> 정답 항상 보기</label>
+      <button id="rvReload" title="최신 기록 다시 불러오기">↻ 새로고침</button>
+      <span class="muted rv-keys">← → 이동 · Space 정답 공개</span>
+    </div>
+    <div class="rv-strip" id="rvStrip"></div>
+    <div id="rvBody"></div>
+  </section>
+
   <!-- 관리자 화면 -->
   <section id="admin" hidden>
     <div class="crumb">
-      <a href="#/" class="backlink">← 세트 목록</a>
       <h2>관리자</h2>
       <span class="badge" id="adminNote"></span>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head">
+        <h3>같이 오답 리뷰</h3>
+        <span class="muted">화면을 같이 보면서 한 문제씩 — 누가 어떤 선택지를 골랐는지 확인</span>
+      </div>
+      <div class="rv-names-row"><span class="muted">누가 골랐는지</span>
+      <div class="seg rv-names" role="group" aria-label="누가 골랐는지 표시">
+        <button data-names="show" class="on" title="선택지 옆에 고른 사람 이름 표시">이름 보기</button>
+        <button data-names="after" title="정답을 공개한 뒤에만 이름 표시">공개 후 보기</button>
+        <button data-names="hide" title="이름 없이 인원수만">블라인드</button>
+      </div></div>
+      <div id="admReviewSets"></div>
     </div>
 
     <div class="panel">
@@ -232,8 +273,17 @@
       </div>
       <div class="timed-exam-progress">
         <span id="examAnswered">0 / 0 답변</span>
+        <button class="ghost" id="pauseExam" type="button">⏸ 일시정지</button>
         <button class="primary" id="finishExam" type="button">시험 제출</button>
         <small id="examFinishHint">모든 문제에 답하면 제출할 수 있습니다.</small>
+      </div>
+    </div>
+    <div class="exam-conflict" id="examConflict" role="alert" hidden>
+      <b>⚠ 이 시험이 다른 곳에서 진행 중이에요</b>
+      <p id="examConflictText"></p>
+      <div class="exam-conflict-actions">
+        <button class="primary" id="conflictReload" type="button">최신 상태 불러오기</button>
+        <button class="ghost" id="conflictTakeover" type="button">여기서 계속 풀기</button>
       </div>
     </div>
     <div class="question-drawer-backdrop" id="qnavBackdrop" hidden></div>
@@ -310,8 +360,8 @@
 <script src="data/study-visuals.js?v=20260911-1"></script>
 <script src="data/study-intros.js?v=20260911-1"></script>
 <script src="data/study-hooks.js?v=20261001-1"></script>
-<script src="assets/store.js?v=20260910-2"></script>
-<script src="assets/app.js?v=20261001-3"></script>
+<script src="assets/store.js?v=20261007-1"></script>
+<script src="assets/app.js?v=20261016-1"></script>
 <script src="assets/pwa.js?v=20260911-1"></script>
 </body>
 </html>

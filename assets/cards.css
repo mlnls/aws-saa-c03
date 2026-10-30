@@ -1,0 +1,57 @@
+/* 플래시카드 화면 (cards.html). 문제 카드·보기·채점 스타일은 style.css의 .card/.opt/.verdict/.expl을 그대로 쓴다. */
+.fc-main{max-width:760px;display:flex;flex-direction:column;gap:12px}
+
+.fc-bar{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.fc-pos{font-size:13px;color:var(--ink-3);font-variant-numeric:tabular-nums}
+.fc-track{height:4px;border-radius:2px;background:var(--panel-2);overflow:hidden}
+.fc-track span{display:block;height:100%;width:0;background:var(--accent);transition:width .25s}
+
+.fc-ask{margin:0;padding:14px 16px 0;font-size:12.5px;font-weight:600;color:var(--ink-3)}
+.fc-q .qtext{padding-top:6px;font-size:16.5px;font-weight:600;line-height:1.6;word-break:keep-all}
+.fc-q .qtext.fc-service{font-size:21px;letter-spacing:-.01em}
+.fc-q .opt .t{flex:1;min-width:0;word-break:keep-all;overflow-wrap:anywhere}
+.fc-q .opts.fc-long .opt{font-size:14px}
+
+.fc-explain{display:flex;flex-direction:column;gap:10px;margin:0 16px 16px}
+.fc-explain .expl{margin:0}
+.fc-explain .expl h4{text-transform:none;letter-spacing:.02em;font-size:12.5px;margin-top:2px}
+.fc-explain .expl p{word-break:keep-all}
+.fc-answer-line{font-size:15px}
+.fc-rules{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+.fc-rules li{padding:8px 11px;border-radius:9px;background:var(--panel);border:1px solid var(--line);line-height:1.5;word-break:keep-all}
+.fc-rules li.on{border-color:var(--accent)}
+.fc-rules li b{color:var(--accent)}
+.fc-wb{display:flex;flex-direction:column;gap:2px;padding:10px 13px;border:1px solid var(--line);border-radius:11px;text-decoration:none;font-size:13px;color:var(--ink-2);background:var(--panel)}
+.fc-wb:hover{border-color:var(--accent)}
+.fc-wb b{color:var(--accent);font-weight:600}
+
+.fc-nav{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 16px;border-top:1px solid var(--line);background:var(--panel-2)}
+.fc-nav button{min-width:96px}
+.fc-nav button:disabled{opacity:.4;cursor:default}
+.fc-hintline{font-size:12.5px;color:var(--ink-3)}
+
+.fc-done-body{padding:26px 22px;display:flex;flex-direction:column;gap:10px}
+.fc-done-body .eyebrow{color:var(--accent);opacity:1}
+.fc-done-body h2{font-size:24px;font-variant-numeric:tabular-nums}
+.fc-done-body p{margin:0;color:var(--ink-2)}
+.fc-wrong{list-style:none;margin:4px 0 0;padding:0;display:flex;flex-wrap:wrap;gap:6px}
+.fc-wrong li{font-size:12.5px;padding:3px 10px;border-radius:999px;background:var(--bad-soft);border:1px solid var(--bad-line);color:var(--bad)}
+.fc-done-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+
+.fc-keys{margin:0;text-align:center;font-size:12px;color:var(--ink-3)}
+.fc-keys kbd{font:11px ui-monospace,SFMono-Regular,Menlo,monospace;border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;padding:0 5px;background:var(--panel)}
+@media (hover:none){.fc-keys{display:none}}
+.fc-foot{margin:4px 0 0;display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:12.5px;color:var(--ink-3)}
+.fc-link{border:none;background:none;padding:2px 0;min-height:0;color:var(--ink-2);text-decoration:underline;text-underline-offset:3px;font-size:12.5px}
+.fc-link.danger{color:var(--bad)}
+
+@media (max-width:560px){
+  .fc-bar .seg{width:100%}
+  .fc-bar .seg button{flex:1;font-size:12.5px}
+  .fc-pos{display:none}
+  .fc-q .qtext{font-size:15.5px}
+  .fc-q .qtext.fc-service{font-size:19px}
+  .fc-explain{margin:0 12px 14px}
+  .fc-nav{padding:10px 12px}
+}
+@media (prefers-reduced-motion:reduce){.fc-track span{transition:none}}

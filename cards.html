@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f1216">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="SAA 공부">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="assets/icons/icon-180.png">
+<title>SAA-C03 플래시카드</title>
+<meta name="description" content="요구사항을 보고 왜 이 AWS 서비스를 고르는지 보기 중에서 골라 보는 SAA-C03 플래시카드">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>☁️</text></svg>">
+<script>try{var t=localStorage.getItem("saa.theme");if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
+<link rel="stylesheet" href="assets/style.css?v=20261016-1">
+<link rel="stylesheet" href="assets/cards.css?v=20261020-2">
+</head>
+<body>
+<header class="top">
+  <div class="top-row">
+    <a class="brand" href="index.html#/practice">
+      <span class="cloud">☁️</span>
+      <div>
+        <h1>AWS SAA-C03</h1>
+        <p class="sub">플래시카드 · 왜 이 서비스인가</p>
+      </div>
+    </a>
+    <div class="top-actions">
+      <button id="themeBtn" class="ghost" title="테마 전환">🌗</button>
+    </div>
+  </div>
+  <div class="stats" id="stats"></div>
+  <nav class="app-tabs" aria-label="학습 방식">
+    <a href="index.html#/practice">문제 풀이</a>
+    <a href="index.html#/workbook">워크북</a>
+    <a class="on" href="cards.html" aria-current="page">플래시카드</a>
+    <a href="wrong.html">오답노트</a>
+  </nav>
+</header>
+
+<main class="fc-main">
+  <div class="fc-bar">
+    <div class="seg" id="modeSeg" role="group" aria-label="문제 방향">
+      <button data-mode="situation" class="on">상황 보고 서비스 고르기</button>
+      <button data-mode="why">서비스 보고 상황 고르기</button>
+    </div>
+    <span class="fc-pos" id="pos"></span>
+  </div>
+  <div class="fc-track"><span id="barFill"></span></div>
+
+  <article class="card fc-q" id="qcard"></article>
+  <article class="card fc-done" id="done" hidden></article>
+
+  <p class="fc-keys"><kbd>1</kbd>~<kbd>4</kbd> 보기 선택 · <kbd>Enter</kbd> 다음 문제</p>
+  <p class="fc-foot"><span>기록은 이 브라우저에만 저장돼요.</span>
+    <button class="fc-link" id="restartAsk">처음부터 다시 섞기</button>
+    <span id="restartConfirm" hidden>지금까지 푼 순서가 초기화돼요. <button class="fc-link danger" id="restartYes">다시 섞기</button> · <button class="fc-link" id="restartNo">취소</button></span>
+  </p>
+</main>
+
+<script src="data/study.js?v=20260911-2"></script>
+<script src="data/flashcards.js?v=20261020-2"></script>
+<script src="assets/cards.js?v=20261020-2"></script>
+</body>
+</html>

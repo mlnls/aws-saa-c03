@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f1216">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="SAA 공부">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="assets/icons/icon-180.png">
+<title>SAA-C03 오답노트</title>
+<meta name="description" content="실전 모의고사 1~3에서 틀린 문제를 한 장씩 넘겨 보고, 틀린 문제만 다시 풀어 보는 오답노트">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>☁️</text></svg>">
+<script>try{var t=localStorage.getItem("saa.theme");if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
+<link rel="stylesheet" href="assets/style.css?v=20261016-1">
+<link rel="stylesheet" href="assets/wrong.css?v=20261023-1">
+</head>
+<body>
+<header class="top">
+  <div class="top-row">
+    <a class="brand" href="index.html#/practice">
+      <span class="cloud">☁️</span>
+      <div>
+        <h1>AWS SAA-C03</h1>
+        <p class="sub">오답노트 · 실전 모의고사 1~3</p>
+      </div>
+    </a>
+    <div class="top-actions">
+      <button id="langBtn" class="ghost" title="문제 원문(EN) ↔ 한국어">EN</button>
+      <button id="themeBtn" class="ghost" title="테마 전환">🌗</button>
+    </div>
+  </div>
+  <div class="stats" id="stats"></div>
+  <nav class="app-tabs" aria-label="학습 방식">
+    <a href="index.html#/practice">문제 풀이</a>
+    <a href="index.html#/workbook">워크북</a>
+    <a href="cards.html">플래시카드</a>
+    <a class="on" href="wrong.html" aria-current="page">오답노트</a>
+  </nav>
+</header>
+
+<main class="wn-main">
+  <div class="wn-bar">
+    <div class="seg" id="modeSeg" role="group" aria-label="보기 방식">
+      <button data-mode="review" class="on">넘겨보기</button>
+      <button data-mode="retry">다시 풀기</button>
+    </div>
+    <span class="wn-pos" id="pos"></span>
+  </div>
+
+  <div class="wn-filters">
+    <div class="seg" id="roundSeg" role="group" aria-label="회차">
+      <button data-r="0" class="on">전체</button><button data-r="1">1회</button><button data-r="2">2회</button><button data-r="3">3회</button>
+    </div>
+    <select id="topicSel" aria-label="주제"></select>
+    <button class="wn-toggle" id="repBtn" aria-pressed="false">⚠ 반복 함정만</button>
+    <button class="wn-toggle" id="hideBtn" aria-pressed="false" data-for="review">정답 가리기</button>
+    <div class="seg" id="scopeSeg" role="group" aria-label="다시 풀 범위" data-for="retry" hidden>
+      <button data-s="todo" class="on">아직 못 맞힌 문제</button><button data-s="all">전체</button><button data-s="miss">또 틀린 문제</button>
+    </div>
+  </div>
+  <div class="fc-track"><span id="barFill"></span></div>
+
+  <article class="card wn-card" id="qcard"></article>
+  <article class="card fc-done" id="done" hidden></article>
+
+  <p class="fc-keys" id="keysReview"><kbd>←</kbd> <kbd>→</kbd> 이전·다음 · 휴대폰은 카드를 옆으로 밀기 · <kbd>Space</kbd> 가린 정답 보기</p>
+  <p class="fc-keys" id="keysRetry" hidden><kbd>1</kbd>~<kbd>5</kbd> 보기 선택 · <kbd>Enter</kbd> 확인·다음 문제</p>
+  <p class="fc-foot"><span>다시 풀기 기록은 이 브라우저에만 저장돼요.</span>
+    <button class="fc-link" id="resetAsk">기록 지우기</button>
+    <span id="resetConfirm" hidden>맞힌 기록이 모두 지워져요. <button class="fc-link danger" id="resetYes">지우기</button> · <button class="fc-link" id="resetNo">취소</button></span>
+  </p>
+</main>
+
+<script src="data/exam1.js"></script>
+<script src="data/exam2.js"></script>
+<script src="data/exam3.js"></script>
+<script src="data/exam4.js"></script>
+<script src="data/exam5.js"></script>
+<script src="data/exam6.js"></script>
+<script src="data/exam7.js"></script>
+<script src="data/exam8.js?v=20260909-2"></script>
+<script src="data/exam9.js?v=20260909-2"></script>
+<script src="data/exam10.js?v=20260909-2"></script>
+<script src="data/exam11.js?v=20260909-2"></script>
+<script src="data/exam12.js?v=20260910-8"></script>
+<script src="data/exam13.js?v=20260910-1"></script>
+<script src="data/exam14.js?v=20260910-1"></script>
+<script src="data/exam15.js?v=20260910-1"></script>
+<script src="data/wrong-notes.js?v=20261023-1"></script>
+<script src="assets/wrong.js?v=20261023-1"></script>
+</body>
+</html>

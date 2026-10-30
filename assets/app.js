@@ -29,6 +29,8 @@
   })();
 
   const $ = (s, r = document) => r.querySelector(s);
+  // 관리자는 문제를 풀지 않는다 — 관리자 화면 + 워크북 읽기만
+  const isAdmin = () => !!(window.Store && Store.user && Store.user.isAdmin);
   const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
   const md = (s) => esc(s)
     .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
@@ -46,11 +48,16 @@
     adm: null,                    // 관리자 데이터 {rows, users}
     admPerson: null,              // 상세를 펼친 사람
     admScope: "wrong",
+    rv: null,                     // 같이 오답 리뷰 {set, pos}
+    rvOnlyWrong: true, rvPaused: true, rvAlways: false, rvShown: {}, rvList: [],
+    rvNames: (() => { try { return localStorage.getItem("saa.rv.names") || "show"; } catch (_) { return "show"; } })(), // show | after | hide
     workbookDay: 1,
     homeMode: "practice",        // practice | exams
-    examSession: null,            // 완료 전에는 메모리에만 유지
+    examSession: null,            // 진행 중 실전 시험 (나가면 계정 상태 exam.paused 에 일시정지 저장)
+    resumeIdx: null,              // 이어서 풀 때 복원할 문제 위치
     examTimerId: null,
     reportFilter: "wrong",        // wrong | all
+    reportAttempt: 0,             // 리포트로 볼 회차 (0 = 최근)
     reportTag: "",
     reportFocus: null,            // 워크북에서 돌아올 때 스크롤할 문제 id
     workbookTopic: 0,             // #/workbook/day/N/topic/M 의 M
@@ -62,8 +69,40 @@
   const answered = (id) => Array.isArray(rec(id).choice) && rec(id).choice.length > 0;
   const posKey = (id) => "saa.pos." + id;
   const examDurationSeconds = (count) => count === 65 ? 130 * 60 : count * 120;
-  const EXAM_EXIT_MESSAGE = "진행 중인 실전 모의고사는 저장되지 않습니다.\n진짜 나가겠습니까?";
+  // 일시정지한 실전 시험: 계정 상태 "exam.paused" = {examId: {sid, startedAt, elapsedSeconds, limitSeconds, answers, idx, pausedAt}}
+  // 쓰기는 Store.savePause / Store.clearPause (화면 sid 단위 조건부 저장)로만 한다.
+  function pausedMap() {
+    const map = Store.user && Store.getState("exam.paused");
+    return map && typeof map === "object" ? Object.assign({}, map) : {};
+  }
+  const newSid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+  // 그 뒤에 제출한 시험이 있으면(다른 기기에서 제출 등) 낡은 일시정지로 보고 무시한다.
+  const isStalePause = (examId, p) => {
+    const done = latestAttempt(examId);
+    return !!(done && Number(done.finishedAt) > Number(p.startedAt || 0));
+  };
+  const pausedExam = (examId) => {
+    const p = pausedMap()[examId];
+    return p && p.answers && !isStalePause(examId, p) ? p : null;
+  };
+  function purgeStalePauses() {
+    const map = pausedMap();
+    const stale = Object.keys(map).filter((id) => !map[id] || !map[id].answers || isStalePause(id, map[id]));
+    stale.forEach((id) => { if (!(isTimedExam() && S.examSession.examId === id)) Store.clearPause(id, null); });
+  }
+  function clearPausedExam(examId) { if (pausedMap()[examId]) Store.clearPause(examId, null); }
+  // resumedAt 이 null 이면 멈춘 상태(다른 곳과 충돌)
+  const examElapsed = (session) => session.elapsedBefore + (session.resumedAt ? (Date.now() - session.resumedAt) / 1000 : 0);
+  const pausedAnsweredCount = (e, p) => e.questions.filter((q) => (p.answers[q.id] || []).length === (q.answer || []).length).length;
   const latestAttempt = (examId) => Store.latestExamAttempt ? Store.latestExamAttempt(examId) : null;
+  // 응시 이력: 오래된 것부터 1회차, 2회차 …
+  const examHistory = (examId) => (Store.examHistory ? Store.examHistory(examId) : []).slice().reverse();
+  function reportAttemptOf(examId, n) {
+    const h = examHistory(examId);
+    if (!h.length) return null;
+    const i = n && n >= 1 && n <= h.length ? n - 1 : h.length - 1;
+    return { attempt: h[i], no: i + 1, count: h.length };
+  }
   const isTimedExam = () => !!(S.scope && S.scope.type === "exam" && S.examSession && S.examSession.examId === S.scope.id);
   const timedChoice = (id) => isTimedExam() ? (S.examSession.answers[id] || []) : [];
   const timedAnswered = (id) => {
@@ -130,18 +169,43 @@
     const start = sizes.slice(0, index).reduce((sum, value) => sum + value, 0);
     return { number: index + 1, days: STUDY_DAYS.slice(start, start + size) };
   });
-  let studyAnswers;
-  try { studyAnswers = JSON.parse(localStorage.getItem(STUDY_PRACTICE_KEY) || "{}"); }
-  catch (_) { studyAnswers = {}; }
+  // 로그인하면 계정 상태(study.answers / study.read)를, 아니면 이 기기 사본을 쓴다.
+  function guestJson(key) {
+    try { return JSON.parse(localStorage.getItem(key) || "{}") || {}; } catch (_) { return {}; }
+  }
+  let studyAnswers = guestJson(STUDY_PRACTICE_KEY);
   const studySelections = {};
   /* 컨셉/전체 설명 '봤어요' 체크(로컬 저장) + 접힘 상태(세션 메모리, 기본값은 읽은 섹션만 접힘) */
   const STUDY_READ_KEY = "saa.study.read";
-  let studyRead;
-  try { studyRead = JSON.parse(localStorage.getItem(STUDY_READ_KEY) || "{}") || {}; }
-  catch (_) { studyRead = {}; }
+  let studyRead = guestJson(STUDY_READ_KEY);
   const studyFold = {};
   function saveStudyRead() {
+    if (Store.user) { Store.setState("study.read", Object.keys(studyRead).length ? studyRead : null); return; }
     try { localStorage.setItem(STUDY_READ_KEY, JSON.stringify(studyRead)); } catch (_) {}
+  }
+  // 로그인/로그아웃·다른 기기 변경 반영. 로그인 시 이 기기에 남은 비로그인 기록은 계정으로 합치고 기기 사본은 비운다.
+  function applyAccountState() {
+    if (!Store.user) {
+      studyRead = guestJson(STUDY_READ_KEY);
+      studyAnswers = guestJson(STUDY_PRACTICE_KEY);
+      return;
+    }
+    const guestRead = guestJson(STUDY_READ_KEY), guestAnswers = guestJson(STUDY_PRACTICE_KEY);
+    studyRead = Object.assign({}, guestRead, Store.getState("study.read") || {});
+    studyAnswers = Object.assign({}, guestAnswers, Store.getState("study.answers") || {});
+    if (Object.keys(guestRead).length) { saveStudyRead(); try { localStorage.removeItem(STUDY_READ_KEY); } catch (_) {} }
+    if (Object.keys(guestAnswers).length) { saveStudyAnswers(); try { localStorage.removeItem(STUDY_PRACTICE_KEY); } catch (_) {} }
+    // 이전 버전(기기별 저장)의 일시정지 시험 이관
+    const legacyKey = "saa.exam.paused." + Store.user.nickname;
+    const legacy = guestJson(legacyKey);
+    if (Object.keys(legacy).length) {
+      const current = pausedMap();
+      Object.keys(legacy).forEach((id) => {
+        if (!current[id] && legacy[id] && legacy[id].answers) Store.savePause(id, Object.assign({}, legacy[id], { sid: newSid() }), true);
+      });
+      try { localStorage.removeItem(legacyKey); } catch (_) {}
+    }
+    purgeStalePauses();
   }
   const overviewKey = (day) => `day-${day.number}-overview`;
   const primerKey = (day) => `day-${day.number}-primer`;
@@ -159,7 +223,8 @@
   }
 
   function saveStudyAnswers() {
-    localStorage.setItem(STUDY_PRACTICE_KEY, JSON.stringify(studyAnswers));
+    if (Store.user) { Store.setState("study.answers", Object.keys(studyAnswers).length ? studyAnswers : null); return; }
+    try { localStorage.setItem(STUDY_PRACTICE_KEY, JSON.stringify(studyAnswers)); } catch (_) {}
   }
   const sectionKey = (day, index) => `day-${day.number}-section-${index}`;
   const studyAnswerKey = (day, lessonIndex, questionId) => `${sectionKey(day, lessonIndex)}-${questionId}`;
@@ -288,11 +353,11 @@
     STUDY_MATCH.set(q.id, out);
     return out;
   }
-  function studyLinksHtml(q, pos) {
+  function studyLinksHtml(q, pos, label) {
     const links = studyMatches(q);
     if (!links.length) return "";
     return `<div class="study-links"><b>관련 워크북</b>${links.map((l) =>
-      `<a href="#/workbook/day/${l.day}/topic/${l.lesson}" data-study-link data-q="${q.id}" data-pos="${pos}">
+      `<a href="#/workbook/day/${l.day}/topic/${l.lesson}" data-study-link data-q="${q.id}" data-pos="${pos}"${label ? ` data-label="${esc(label)}"` : ""}>
         <span class="sl-day">${l.icon || "📘"} Day ${l.day} · ${esc(l.dayTitle)}</span>
         <span class="sl-topic">${String(l.lesson).padStart(2, "0")} ${esc(l.lessonTitle)} →</span></a>`).join("")}</div>`;
   }
@@ -302,7 +367,7 @@
     if (S.studyReturn) {
       const r = S.studyReturn;
       document.body.insertAdjacentHTML("beforeend",
-        `<a id="studyReturnBar" class="study-return" href="${esc(r.hash)}" data-study-return>← 리포트 Question #${r.pos}로 돌아가기</a>`);
+        `<a id="studyReturnBar" class="study-return" href="${esc(r.hash)}" data-study-return>← ${esc(r.label || "리포트 Question #" + r.pos)}(으)로 돌아가기</a>`);
     }
     if (!S.workbookTopic) return;
     if (studyDetailsState === "loading") return; // 상세 설명이 들어오면 레이아웃이 바뀌므로 로드 후 스크롤
@@ -328,10 +393,21 @@
     el.classList.remove("flash"); void el.offsetWidth; el.classList.add("flash");
   }
   document.addEventListener("click", (ev) => {
+    const sl = ev.target.closest("a[data-study-link][data-label]");
+    if (sl) { S.studyReturn = { hash: location.hash, qid: sl.dataset.q, pos: sl.dataset.pos, label: sl.dataset.label }; return; }
     const back = ev.target.closest("[data-study-return]");
     if (back && S.studyReturn) { S.reportFocus = S.studyReturn.qid; }
   });
   function practiceCard(q, day, lessonIndex) {
+    if (isAdmin()) {
+      const ans = (q.answer || []);
+      return `<article class="study-practice readonly">
+      <header><span>CHECK Q${q.number}</span><b>${esc((q.tags || []).slice(0, 2).join(" · ") || "설계 문제")}</b></header>
+      <p class="study-practice-question">${esc(cleanStudyText(txt(q.question)))}</p>
+      <ol>${(q.options || []).map((o) => `<li><button type="button" class="${ans.includes(o.k) ? "correct" : ""}" disabled><b>${esc(o.k)}</b><span>${esc(cleanStudyText(txt(o)))}</span></button></li>`).join("")}</ol>
+      <div class="study-practice-answer"><b>정답 ${esc(ans.slice().sort().join(", "))}</b><p>${md(cleanStudyText(txt(q.explanation)))}</p></div>
+    </article>`;
+    }
     const key = studyAnswerKey(day, lessonIndex, q.id);
     const saved = studyAnswers[key] || null;
     const selected = saved ? saved.choice : (studySelections[key] || []);
@@ -626,10 +702,11 @@
 
     $("#exams").innerHTML = EXAMS.map((e) => {
       const attempt = latestAttempt(e.id);
+      const paused = pausedExam(e.id);
       const minutes = Math.round(examDurationSeconds(e.questions.length) / 60);
       const pct = attempt ? Math.round((attempt.correct / attempt.total) * 100) : 0;
       return `<a class="exam-card" href="#/${e.id}">
-        <div class="ec-head"><h3>${esc(e.title)}</h3>${e.note ? `<span class="badge">${esc(e.note)}</span>` : ""}</div>
+        <div class="ec-head"><h3>${esc(e.title)}</h3>${paused ? `<span class="badge paused">⏸ 이어서 풀기 ${pausedAnsweredCount(e, paused)}/${e.questions.length}</span>` : e.note ? `<span class="badge">${esc(e.note)}</span>` : ""}</div>
         <p class="ec-count">${e.questions.length}문제 · ${minutes}분</p>
         ${domainMixHtml(e, attempt)}
         <p class="exam-answer-types">단일 선택 ${e.questions.length - multiCount(e)} · 복수 선택 ${multiCount(e)}</p>
@@ -658,6 +735,28 @@
 
   }
 
+  /* ---------------- 응시 기록 ---------------- */
+  function examHistoryHtml(e) {
+    const h = examHistory(e.id);
+    if (!h.length) return "";
+    const rows = h.map((a, i) => {
+      const pct = a.total ? Math.round((a.correct / a.total) * 100) : 0;
+      const prev = h[i - 1];
+      const diff = prev ? a.correct - prev.correct : null;
+      return `<a class="eh-row" href="#/${e.id}/report/${i + 1}">
+        <span class="eh-no">${i + 1}회차${i === h.length - 1 && h.length > 1 ? ' <em>최근</em>' : ""}</span>
+        <span class="eh-date">${new Date(a.finishedAt).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "numeric", minute: "2-digit" })}</span>
+        <span class="eh-score"><b>${a.correct}</b> / ${a.total} · ${pct}%${diff === null ? "" : ` <i class="${diff > 0 ? "up" : diff < 0 ? "down" : ""}">${diff > 0 ? "▲" + diff : diff < 0 ? "▼" + -diff : "±0"}</i>`}</span>
+        <span class="eh-bar"><span style="width:${pct}%"></span></span>
+      </a>`;
+    }).reverse().join("");
+    return `<section class="exam-history">
+      <h4>응시 기록 <span>${h.length}회</span></h4>
+      <div class="eh-list">${rows}</div>
+      <p class="eh-note">다시 응시해도 이전 기록은 그대로 남아요. 관리자 화면(같이 오답 리뷰)에는 <b>1회차 결과만</b> 보이고, 2회차부터는 나만 볼 수 있어요.</p>
+    </section>`;
+  }
+
   /* ---------------- 세트 상세 ---------------- */
   async function renderDetail() {
     const e = examOf(S.scope.id);
@@ -675,13 +774,26 @@
     $("#dBar").style.width = pct + "%";
     $("#dMeta").innerHTML = attempt
       ? `<span>최근 완료 ${new Date(attempt.finishedAt).toLocaleString("ko-KR")}</span><span class="dot">·</span><span>소요 ${formatClock(attempt.elapsedSeconds)}</span><span class="dot">·</span><span>정답 ${attempt.correct}</span><span class="dot">·</span><span class="warn-t">오답 ${attempt.total - attempt.correct}</span><span class="dot">·</span><span>정답률 ${pct}%</span>`
-      : `<span>아직 완료한 시험이 없어요. 중간에 나간 시험은 여기에 기록되지 않습니다.</span>`;
+      : `<span>아직 완료한 시험이 없어요. 풀다가 나가면 진행 상황이 이 기기에 저장되어 이어서 풀 수 있어요.</span>`;
 
-    $("#dActions").innerHTML = `${attempt ? `<a class="btn primary" href="#/${e.id}/report">결과 리포트 · 틀린 문제 보기</a>` : ""}
-      <button class="btn ${attempt ? "" : "primary"}" type="button" data-start-exam="${e.id}">${attempt ? "다시 응시" : "실전 시험 시작"}</button>
+    const paused = pausedExam(e.id);
+    let pausedHtml = "";
+    if (paused) {
+      const left = paused.limitSeconds - paused.elapsedSeconds;
+      const done = pausedAnsweredCount(e, paused);
+      pausedHtml = `<div class="exam-paused">
+        <div class="exam-paused-copy"><b>⏸ 일시정지한 시험이 있어요</b>
+          <span>답변 ${done} / ${total} · ${left >= 0 ? "남은 시간 " + formatClock(left) : "시간 초과 +" + formatClock(-left)} · ${new Date(paused.pausedAt).toLocaleString("ko-KR")} 저장</span></div>
+        <div class="bar"><span style="width:${Math.round(done / total * 100)}%"></span></div>
+        <button class="btn primary" type="button" data-resume-exam="${e.id}">이어서 풀기 · ${(paused.idx || 0) + 1}번부터</button>
+      </div>`;
+    }
+    $("#dActions").innerHTML = `${pausedHtml}${attempt ? `<a class="btn primary" href="#/${e.id}/report">결과 리포트 · 틀린 문제 보기</a>` : ""}
+      <button class="btn ${attempt || paused ? "" : "primary"}" type="button" data-start-exam="${e.id}">${paused ? "처음부터 다시" : attempt ? "다시 응시" : "실전 시험 시작"}</button>
       <span class="exam-start-copy">${total}문제 · 제한 시간 ${minutes}분 · 시간 초과 후에도 계속 풀이 가능</span>
       ${domainMixHtml(e, attempt)}
-      <p class="exam-detail-format">단일 선택 ${total - multiCount(e)}문항 · 복수 선택 ${multiCount(e)}문항 · 50개 채점 문항과 15개 비채점 문항을 실제 시험에서는 구분할 수 없습니다.</p>`;
+      <p class="exam-detail-format">단일 선택 ${total - multiCount(e)}문항 · 복수 선택 ${multiCount(e)}문항 · 50개 채점 문항과 15개 비채점 문항을 실제 시험에서는 구분할 수 없습니다.</p>
+      ${examHistoryHtml(e)}`;
 
     $("#stats").innerHTML = [
       `<span class="chip">${esc(e.title)} <b>${total}</b>문제</span>`,
@@ -736,14 +848,14 @@
 
     if (!S.adm) {
       $("#admUsers").innerHTML = `<tr><td>불러오는 중…</td></tr>`;
-      try {
-        const [rows, users] = await Promise.all([Store.adminRows(), Store.adminUsers()]);
-        S.adm = { rows: rows || [], users: users || [] };
-      } catch (e) { S.adm = { rows: [], users: [], error: e.message || String(e) }; }
+      await loadAdminData();
       if (S.view !== "admin") return;
     }
+    $("#admReviewSets").innerHTML = S.adm.error ? "" : reviewSetsHtml();
+    syncNamesSeg();
     const rows = S.adm.rows, people = {};
     (S.adm.users || []).forEach((p) => { people[p.nickname] = { nickname: p.nickname, isAdmin: p.is_admin, solved: 0, ok: 0, last: null }; });
+    (S.adm.exams || []).forEach((x) => { people[x.nickname] = people[x.nickname] || { nickname: x.nickname, solved: 0, ok: 0, last: null }; });
     rows.forEach((r) => {
       const p = (people[r.nickname] = people[r.nickname] || { nickname: r.nickname, solved: 0, ok: 0, last: null });
       if (r.correct === true || r.correct === false) { p.solved++; if (r.correct) p.ok++; }
@@ -766,12 +878,17 @@
       : (list.length ? list.map((p) => {
           const rate = p.solved ? Math.round((p.ok / p.solved) * 100) : 0;
           const me = Store.user && p.nickname === Store.user.nickname;
+          const ex = (S.adm.exams || []).filter((x) => x.nickname === p.nickname).map((x) => {
+            const e = examOf(x.exam_id), t = e ? e.title : x.exam_id;
+            return x.status === "done" ? `${esc(t)} <b>${x.correct}/${x.total}</b>` : `${esc(t)} 푸는 중 ${Object.values(x.answers || {}).filter((v) => v && v.length).length}/${e ? e.questions.length : "?"}`;
+          }).join("<br>");
           return `<tr${S.admPerson === p.nickname ? ' class="me"' : ""}>
             <td><a href="#" class="linky" data-person="${esc(p.nickname)}">${esc(p.nickname)}</a>${p.isAdmin ? ' <span class="badge">관리자</span>' : ""}${me ? " (나)" : ""}</td>
             <td>${p.solved}문제</td>
             <td>정답 ${p.ok}</td>
             <td class="${p.solved - p.ok ? "bad-t" : ""}">오답 ${p.solved - p.ok}</td>
             <td>정답률 ${rate}%</td>
+            <td class="muted">${ex || "실전 기록 없음"}</td>
             <td class="muted">${p.last ? new Date(p.last).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }) : ""}</td>
           </tr>`;
         }).join("") : `<tr><td>아직 기록이 없어요.</td></tr>`);
@@ -779,17 +896,27 @@
     // 선택한 사람의 오답 목록
     const pw = $("#admPersonWrap");
     if (S.admPerson) {
-      const mine = rows.filter((r) => r.nickname === S.admPerson && r.correct === false);
+      const mine = rows.filter((r) => r.nickname === S.admPerson && r.correct === false)
+        .map((r) => ({ q: byId(r.qid), qid: r.qid, sel: r.choice || [], where: "연습", review: null }));
+      (S.adm.exams || []).filter((x) => x.nickname === S.admPerson).forEach((x) => {
+        const e = examOf(x.exam_id); if (!e) return;
+        e.questions.forEach((q, i) => {
+          const sel = (x.answers && x.answers[q.id]) || [];
+          if (x.status === "paused" && !sel.length) return;
+          if (!sameAnswer(q, sel)) mine.push({ q, qid: q.id, sel, where: e.title + (x.status === "paused" ? " (푸는 중)" : ""), pos: i + 1, review: `#/admin/review/${e.id}/${i + 1}` });
+        });
+      });
       $("#admPersonTitle").textContent = S.admPerson + " 님이 틀린 문제 " + mine.length + "개";
       $("#admPerson").innerHTML = mine.length ? `<div class="wrongrows">` + mine.map((r) => {
-        const q = byId(r.qid);
-        const assignment = q && MOCK_ASSIGNMENT[q.id];
-        const ex = assignment && examOf(assignment.examId);
+        const q = r.q;
+        const wb = q && studyMatches(q)[0];
+        const label = r.review ? `${r.where} #${r.pos}` : (q ? "원본 #" + q.number : r.qid);
         return `<div class="wrongrow">
-          <span class="wr-q">${q ? (ex ? esc(ex.title) + " #" + assignment.position : "원본 #" + q.number) : esc(r.qid)}</span>
-          <span class="wr-pick"><b class="bad-t">${(r.choice || []).join(", ") || "-"}</b> 선택</span>
+          <span class="wr-q">${r.review ? `<a href="${r.review}" class="linky">${esc(label)}</a>` : esc(label)}</span>
+          <span class="wr-pick"><b class="bad-t">${r.sel.join(", ") || "-"}</b> 선택</span>
           <span class="wr-ans">정답 <b class="ok-t">${q ? q.answer.join(", ") : "?"}</b></span>
           <span class="wr-tags">${q ? (q.tags || []).slice(0, 3).map((t) => `<span class="badge">${esc(t)}</span>`).join("") : ""}</span>
+          ${wb ? `<a class="wr-wb" href="#/workbook/day/${wb.day}/topic/${wb.lesson}" data-study-link data-q="${q.id}" data-pos="${r.pos || q.number}" data-label="관리자">${wb.icon || "📘"} Day ${wb.day} · ${esc(wb.lessonTitle)} →</a>` : ""}
         </div>`;
       }).join("") + `</div>` : `<p class="muted">틀린 문제가 없어요.</p>`;
       pw.hidden = false;
@@ -828,8 +955,9 @@
           <span class="badge ${m.bad ? "bad" : "ok"}">${m.tries}명 중 정답 ${m.ok} (${m.rate}%)</span>
         </div>
         <div class="admq-picks">${picks}<span class="muted">정답 ${ans || "?"}</span></div>
-        ${m.wrongBy.length ? `<div class="admq-wrong">틀린 사람: ${m.wrongBy.map((n) => esc(n)).join(", ")}</div>` : ""}
+        ${m.wrongBy.length ? `<div class="admq-wrong">${S.rvNames === "hide" ? `틀린 사람 ${m.wrongBy.length}명` : `틀린 사람: ${m.wrongBy.map((n) => esc(n)).join(", ")}`}</div>` : ""}
         ${q ? `<div class="admq-text">${esc(txt(q.question)).split("\n")[0].slice(0, 150)}…</div>` : ""}
+        ${q ? studyLinksHtml(q, q.number, "관리자") : ""}
       </div>`;
     }).join("") : `<p class="muted">${S.admScope === "wrong" ? "아직 틀린 문제가 없어요." : "아직 푼 문제가 없어요."}</p>`;
   }
@@ -846,6 +974,210 @@
     S.admScope = b.dataset.scope;
     [...$("#admScope").children].forEach((x) => x.classList.toggle("on", x === b));
     renderAdmin();
+  });
+
+  /* ---------------- 관리자: 같이 오답 리뷰 ----------------
+   * #/admin/review/<세트>/<번호> — 한 문제씩 크게 띄워 놓고, 선택지마다 누가 골랐는지 보면서 같이 리뷰한다.
+   * 세트 = 실전 모의고사 id (제출 결과 + 원하면 일시정지 중인 답) 또는 "practice" (연습 풀이 기록). */
+  async function loadAdminData() {
+    if (S.adm) return;
+    try {
+      const [rows, users, exams] = await Promise.all([
+        Store.adminRows(), Store.adminUsers(),
+        Store.adminExams().catch((e) => { console.warn("실전 답안 불러오기 실패:", e.message || e); return []; }),
+      ]);
+      const admins = new Set((users || []).filter((u) => u.is_admin).map((u) => u.nickname));
+      if (Store.user) admins.add(Store.user.nickname);
+      const keep = (x) => !admins.has(x.nickname);
+      S.adm = { rows: (rows || []).filter(keep), users: (users || []).filter(keep), exams: (exams || []).filter(keep) };
+    } catch (e) { S.adm = { rows: [], users: [], exams: [], error: e.message || String(e) }; }
+  }
+  // 세트별 [{nickname, status, answers}] — 한 사람당 하나 (제출 결과가 있으면 그것, 없으면 일시정지 답)
+  function reviewTakers(setId) {
+    const by = {};
+    (S.adm.exams || []).forEach((x) => {
+      if (x.exam_id !== setId) return;
+      if (x.status === "paused" && !S.rvPaused) return;
+      const cur = by[x.nickname];
+      if (!cur || (cur.status === "paused" && x.status === "done")) by[x.nickname] = x;
+    });
+    return Object.values(by).sort((a, b) => a.nickname.localeCompare(b.nickname));
+  }
+  // 문제 목록 + 문제마다 사람별 답 [{nickname, sel, ok, paused}]
+  function reviewData(setId) {
+    if (setId === "practice") {
+      const byQ = {};
+      (S.adm.rows || []).forEach((r) => {
+        if (r.correct === null || !byId(r.qid)) return;
+        (byQ[r.qid] = byQ[r.qid] || []).push({ nickname: r.nickname, sel: r.choice || [], ok: r.correct === true, paused: false });
+      });
+      return ALL.filter((q) => byQ[q.id]).map((q, i) => ({ q, pos: i + 1, label: "원본 #" + q.number, people: byQ[q.id] }));
+    }
+    const e = examOf(setId); if (!e) return [];
+    const takers = reviewTakers(setId);
+    return e.questions.map((q, i) => ({
+      q, pos: i + 1, label: "Question #" + (i + 1),
+      people: takers.map((t) => {
+        const sel = (t.answers && t.answers[q.id]) || [];
+        if (t.status === "paused" && !sel.length) return null; // 아직 안 푼 문제
+        return { nickname: t.nickname, sel, ok: sameAnswer(q, sel), paused: t.status === "paused" };
+      }).filter(Boolean),
+    }));
+  }
+  function reviewSets() {
+    const sets = EXAMS.map((e) => {
+      const xs = (S.adm.exams || []).filter((x) => x.exam_id === e.id);
+      return { id: e.id, title: e.title, done: xs.filter((x) => x.status === "done").length, paused: xs.filter((x) => x.status === "paused").length };
+    }).filter((s) => s.done || s.paused);
+    const practice = new Set((S.adm.rows || []).filter((r) => r.correct !== null).map((r) => r.qid)).size;
+    if (practice) sets.push({ id: "practice", title: "연습 풀이 기록", practice });
+    return sets;
+  }
+  function reviewSetsHtml() {
+    const sets = reviewSets();
+    if (!sets.length) return `<p class="muted">아직 리뷰할 기록이 없어요. 누군가 실전 모의고사를 풀면 여기 나타나요.</p>`;
+    return `<div class="rv-sets">` + sets.map((s) => `<a class="rv-set" href="#/admin/review/${s.id}">
+        <b>${esc(s.title)}</b>
+        <span>${s.practice ? `${s.practice}문제` : `제출 ${s.done}명${s.paused ? ` · 푸는 중 ${s.paused}명` : ""}`}</span>
+        <span class="rv-go">같이 리뷰 →</span>
+      </a>`).join("") + `</div>`;
+  }
+
+  async function renderReview() {
+    const u = Store.user;
+    if (!u || !u.isAdmin) { location.hash = "#/"; return; }
+    const R = S.rv || {};
+    $("#stats").innerHTML = "";
+    if (!S.adm) {
+      $("#rvBody").innerHTML = `<p class="muted">불러오는 중…</p>`;
+      await loadAdminData();
+      if (S.view !== "review") return;
+    }
+    const setTitle = R.set === "practice" ? "연습 풀이 기록" : ((examOf(R.set) || {}).title || R.set);
+    $("#rvTitle").textContent = setTitle + " · 같이 오답 리뷰";
+    $("#rvOnlyWrong").classList.toggle("on", S.rvOnlyWrong);
+    $("#rvAll").classList.toggle("on", !S.rvOnlyWrong);
+    $("#rvPaused").checked = S.rvPaused;
+    $("#rvPausedWrap").hidden = R.set === "practice";
+    $("#rvAlways").checked = S.rvAlways;
+    syncNamesSeg();
+
+    if (S.adm.error) { $("#rvBody").innerHTML = `<p class="muted">불러오지 못했어요: ${esc(S.adm.error)}</p>`; $("#rvStrip").innerHTML = ""; return; }
+    const all = reviewData(R.set);
+    const list = S.rvOnlyWrong ? all.filter((x) => x.people.some((p) => !p.ok)) : all.filter((x) => x.people.length || R.set !== "practice");
+    S.rvList = list.map((x) => x.pos);
+    if (!list.length) {
+      $("#rvStrip").innerHTML = "";
+      $("#rvBody").innerHTML = `<p class="muted">${S.rvOnlyWrong ? "틀린 사람이 있는 문제가 없어요." : "문제가 없어요."}</p>`;
+      return;
+    }
+    let cur = list.find((x) => x.pos === R.pos);
+    if (!cur) { cur = list[0]; history.replaceState(null, "", `#/admin/review/${R.set}/${cur.pos}`); R.pos = cur.pos; }
+    const at = list.indexOf(cur);
+
+    $("#rvStrip").innerHTML = list.map((x) => {
+      const bad = x.people.filter((p) => !p.ok).length;
+      const cls = !x.people.length ? "" : bad ? "bad" : "ok";
+      return `<button class="rv-no ${cls}${x === cur ? " on" : ""}" data-rvpos="${x.pos}" title="${esc(x.label)} · ${x.people.length}명 중 오답 ${bad}">${x.pos}${bad ? `<small>${bad}</small>` : ""}</button>`;
+    }).join("");
+
+    const { q, people } = cur;
+    const key = R.set + ":" + q.id;
+    const shown = S.rvAlways || !!(S.rvShown && S.rvShown[key]);
+    const ans = q.answer || [];
+    const pickers = (k) => people.filter((p) => p.sel.includes(k));
+    const names = S.rvNames === "show" || (S.rvNames === "after" && shown);
+    const chip = (p) => `<span class="rv-name${shown ? (p.ok ? " ok" : " bad") : ""}">${esc(p.nickname)}${p.paused ? "<i>푸는 중</i>" : ""}</span>`;
+    const opts = (q.options || []).map((o) => {
+      const who = pickers(o.k), isAns = ans.includes(o.k);
+      let c = "opt rv-opt";
+      if (shown && isAns) c += " correct"; else if (shown && who.length) c += " chosen-bad";
+      return `<li><div class="${c}">
+          <span class="k">${o.k}.</span>
+          <span class="t">${esc(txt(o))}</span>
+          <span class="rv-count">${[who.length ? who.length + "명" : "", shown && isAns ? "정답" : ""].filter(Boolean).join(" · ")}</span>
+        </div>${who.length && names ? `<div class="rv-who">${who.map(chip).join("")}</div>` : ""}</li>`;
+    }).join("");
+    const none = people.filter((p) => !p.sel.length);
+    const okN = people.filter((p) => p.ok).length;
+    const wrongs = shown && q.why_wrong
+      ? Object.keys(q.why_wrong).filter((k) => !ans.includes(k)).map((k) => {
+          const who = pickers(k);
+          return `<li class="${who.length ? "mine" : ""}"><b>${k}</b><span>${md(txt(q.why_wrong[k]))}${who.length ? ` <em>← ${names ? who.map((p) => esc(p.nickname)).join(", ") : who.length + "명"} 선택</em>` : ""}</span></li>`;
+        }).join("")
+      : "";
+    const assignment = R.set !== "practice" && MOCK_ASSIGNMENT[q.id];
+    const dom = assignment && MOCK_DOMAINS.find((d) => d.id === assignment.domain);
+
+    $("#rvBody").innerHTML = `<article class="card rv-card">
+      <div class="chead">
+        <span class="qno">${esc(cur.label)}</span>
+        ${dom ? `<span class="badge" data-domain="${dom.id}">${esc(dom.shortName || dom.name)}</span>` : ""}
+        ${(q.tags || []).map((t) => `<span class="badge">${esc(t)}</span>`).join("")}
+        <span class="spacer"></span>
+        <span class="badge">${people.length}명 응답</span>
+        ${shown && people.length ? `<span class="badge ${okN === people.length ? "ok" : "bad"}">정답 ${okN} · 오답 ${people.length - okN}</span>` : ""}
+      </div>
+      <div class="qtext">${esc(txt(q.question))}</div>
+      ${ans.length > 1 ? `<p class="muted rv-multi">정답 ${ans.length}개를 고르는 문제</p>` : ""}
+      <ul class="opts">${opts}</ul>
+      ${none.length ? `<p class="rv-none">무응답: ${names ? none.map(chip).join("") : none.length + "명"}</p>` : ""}
+      ${people.length ? "" : `<p class="muted rv-none">아직 이 문제를 푼 사람이 없어요.</p>`}
+      ${shown ? `<div class="expl">
+          <h4>정답 ${ans.join(", ")}</h4>
+          <p>${md(txt(q.explanation))}</p>
+          ${wrongs ? `<ul class="wrongs">${wrongs}</ul>` : ""}
+        </div>
+        ${studyLinksHtml(q, cur.pos, "같이 오답 리뷰 #" + cur.pos)}` : `<div class="rv-reveal"><button class="primary" data-rvreveal>정답·해설 공개 <kbd>Space</kbd></button></div>`}
+    </article>
+    <div class="rv-nav">
+      <button data-rvmove="-1" ${at ? "" : "disabled"}>← 이전</button>
+      <span class="muted">${at + 1} / ${list.length}</span>
+      <button data-rvmove="1" ${at < list.length - 1 ? "" : "disabled"}>다음 →</button>
+    </div>`;
+    const on = $("#rvStrip .rv-no.on"); if (on) on.scrollIntoView({ block: "nearest", inline: "center" });
+  }
+  function reviewMove(d) {
+    const list = S.rvList || [], i = list.indexOf(S.rv && S.rv.pos);
+    const next = list[i + d]; if (next == null) return;
+    location.hash = `#/admin/review/${S.rv.set}/${next}`;
+  }
+  function reviewReveal() {
+    const x = (reviewData(S.rv.set) || []).find((y) => y.pos === S.rv.pos); if (!x) return;
+    S.rvShown = S.rvShown || {};
+    const key = S.rv.set + ":" + x.q.id;
+    S.rvShown[key] = !S.rvShown[key];
+    renderReview();
+  }
+  $("#review").addEventListener("click", (e) => {
+    const n = e.target.closest("button[data-rvpos]");
+    if (n) { location.hash = `#/admin/review/${S.rv.set}/${n.dataset.rvpos}`; return; }
+    const m = e.target.closest("button[data-rvmove]");
+    if (m) { reviewMove(Number(m.dataset.rvmove)); return; }
+    if (e.target.closest("button[data-rvreveal]")) { reviewReveal(); return; }
+    if (e.target.closest("#rvOnlyWrong")) { S.rvOnlyWrong = true; renderReview(); return; }
+    if (e.target.closest("#rvAll")) { S.rvOnlyWrong = false; renderReview(); return; }
+    if (e.target.closest("#rvReload")) { S.adm = null; renderReview(); return; }
+  });
+  function syncNamesSeg() {
+    document.querySelectorAll(".rv-names button[data-names]").forEach((b) => b.classList.toggle("on", b.dataset.names === S.rvNames));
+  }
+  document.addEventListener("click", (e) => {
+    const b = e.target.closest(".rv-names button[data-names]"); if (!b) return;
+    S.rvNames = b.dataset.names;
+    try { localStorage.setItem("saa.rv.names", S.rvNames); } catch (_) {}
+    syncNamesSeg();
+    if (S.view === "review") renderReview(); else if (S.view === "admin") renderAdmin();
+  });
+  $("#rvPaused").addEventListener("change", (e) => { S.rvPaused = e.target.checked; renderReview(); });
+  $("#rvAlways").addEventListener("change", (e) => { S.rvAlways = e.target.checked; renderReview(); });
+  addEventListener("keydown", (e) => {
+    if (S.view !== "review") return;
+    const tag = (e.target.tagName || "").toLowerCase();
+    if (tag === "input" || tag === "select" || tag === "textarea" || $("#authDlg").open) return;
+    if (e.key === "ArrowRight") { e.preventDefault(); reviewMove(1); }
+    else if (e.key === "ArrowLeft") { e.preventDefault(); reviewMove(-1); }
+    else if (e.key === " " || e.key === "Enter") { if (S.rvAlways) return; e.preventDefault(); reviewReveal(); }
   });
 
   /* ---------------- 풀이 대상 목록 ---------------- */
@@ -899,7 +1231,9 @@
   }
   function updateExamClock() {
     if (!isTimedExam()) return;
-    const elapsed = Math.floor((Date.now() - S.examSession.startedAt) / 1000);
+    const elapsed = Math.floor(examElapsed(S.examSession));
+    // 15초마다 저장 (백그라운드 탭은 타이머가 느려지므로 시각 기준)
+    if (Date.now() - (S.examSession.lastPersist || 0) >= 15000) persistExamSession();
     const remaining = S.examSession.limitSeconds - elapsed;
     const overtime = remaining < 0;
     $("#examTimer").textContent = overtime ? `+${formatClock(-remaining)}` : formatClock(remaining);
@@ -917,29 +1251,102 @@
     S.sel = {};
     S.reveal = {};
   }
+  // 진행 상황(답·경과 시간·위치)을 저장. 나간 동안에는 시간이 흐르지 않는다.
+  function pauseEntry() {
+    const s = S.examSession;
+    const prev = pausedMap()[s.examId];
+    return {
+      sid: s.sid,
+      startedAt: s.startedAt,
+      elapsedSeconds: Math.floor(examElapsed(s)),
+      limitSeconds: s.limitSeconds,
+      answers: s.answers,
+      idx: isTimedExam() ? S.idx : (prev ? prev.idx : 0),
+      pausedAt: Date.now(),
+    };
+  }
+  function persistExamSession() {
+    const s = S.examSession;
+    if (!s || !Store.user || s.conflict) return;   // 다른 곳에 넘어간 화면은 저장하지 않는다
+    s.lastPersist = Date.now();
+    Store.savePause(s.examId, pauseEntry(), s.takeover);
+    s.takeover = false;
+  }
+  // 다른 탭·기기에서 같은 시험을 이어 풀었거나(TAKEN) 제출·새로 시작했으면(GONE) 이 화면을 멈춘다.
+  function freezeExamSession(code) {
+    const s = S.examSession;
+    if (!s || s.conflict) return;
+    s.elapsedBefore = examElapsed(s);
+    s.resumedAt = null;
+    s.conflict = code;
+    stopExamClock();
+    if (isTimedExam()) renderSolve();
+  }
+  Store.onPauseConflict = (examId, code) => {
+    if (S.examSession && S.examSession.examId === examId && (code === "TAKEN" || code === "GONE")) freezeExamSession(code);
+  };
+  function suspendExamSession() {
+    persistExamSession();
+    discardExamSession();
+  }
+  function pauseTimedExam() {
+    if (!isTimedExam()) return;
+    const id = S.examSession.examId;
+    suspendExamSession();
+    acceptedHash = "#/" + id;
+    location.hash = "#/" + id;
+  }
   function examRouteHash() {
     return S.examSession ? `#/${S.examSession.examId}/exam` : "";
   }
   function isLeavingTimedExam(nextHash) {
     return isTimedExam() && nextHash !== examRouteHash();
   }
-  function confirmExamExit() {
-    return !isTimedExam() || confirm(EXAM_EXIT_MESSAGE);
-  }
   function startTimedExam(examId) {
     const e = examOf(examId);
     if (!e) return;
     if (!Store.user) { openAuth("실전 시험 완료 기록을 저장하려면 먼저 로그인해 주세요."); return; }
+    const paused = pausedExam(examId);
+    if (paused && !confirm(`일시정지한 시험(답변 ${pausedAnsweredCount(e, paused)}/${e.questions.length})이 있어요.\n지우고 처음부터 다시 시작할까요?`)) return;
+    clearPausedExam(examId);
     stopExamClock();
+    const now = Date.now();
     S.examSession = {
       examId,
-      startedAt: Date.now(),
+      sid: newSid(),
+      takeover: true,
+      startedAt: now,
       limitSeconds: examDurationSeconds(e.questions.length),
       answers: {},
+      elapsedBefore: 0,
+      resumedAt: now,
     };
+    S.resumeIdx = 0;
     S.sel = {};
     S.reveal = {};
     S.restart = true;
+    location.hash = `#/${examId}/exam`;
+  }
+  function resumeTimedExam(examId) {
+    const e = examOf(examId);
+    if (!e) return;
+    if (!Store.user) { openAuth("이어서 풀려면 먼저 로그인해 주세요."); return; }
+    const p = pausedExam(examId);
+    if (!p) { startTimedExam(examId); return; }
+    stopExamClock();
+    S.examSession = {
+      examId,
+      sid: newSid(),
+      takeover: true,             // 이어 푸는 이 화면이 주인이 된다 (다른 화면은 다음 저장 때 멈춤)
+      startedAt: p.startedAt,
+      limitSeconds: p.limitSeconds || examDurationSeconds(e.questions.length),
+      answers: p.answers || {},
+      elapsedBefore: p.elapsedSeconds || 0,
+      resumedAt: Date.now(),
+    };
+    S.resumeIdx = p.idx || 0;
+    S.sel = {};
+    S.reveal = {};
     location.hash = `#/${examId}/exam`;
   }
   async function finishTimedExam() {
@@ -952,6 +1359,12 @@
       setQuestionDrawer(true);
       return;
     }
+    if (S.examSession.conflict) return;
+    // 제출 직전에 이 화면이 아직 주인인지 확인 (다른 곳에서 이어 풀었거나 제출했으면 막는다)
+    persistExamSession();
+    const check = await Store.savePauseNow(S.examSession.examId, pauseEntry());
+    if (check === "TAKEN" || check === "GONE") { freezeExamSession(check); return; }
+    const sid = S.examSession.sid;
     const finishedAt = Date.now();
     const answers = Object.fromEntries(e.questions.map((q) => [q.id, timedChoice(q.id).slice()]));
     const correct = e.questions.filter((q) => {
@@ -961,15 +1374,17 @@
     await Store.saveExamAttempt(e.id, {
       startedAt: S.examSession.startedAt,
       finishedAt,
-      elapsedSeconds: Math.floor((finishedAt - S.examSession.startedAt) / 1000),
+      elapsedSeconds: Math.floor(examElapsed(S.examSession)),
       limitSeconds: S.examSession.limitSeconds,
       total: e.questions.length,
       correct,
       answers,
     });
     discardExamSession();
+    Store.clearPause(e.id, sid);
     S.reportFilter = correct === e.questions.length ? "all" : "wrong";
     S.reportTag = "";
+    S.reportAttempt = 0;
     location.hash = `#/${e.id}/report`;
   }
 
@@ -986,8 +1401,9 @@
   }
   function renderReport() {
     const e = examOf(S.scope.id);
-    const attempt = e && latestAttempt(e.id);
-    if (!e || !attempt) { location.hash = e ? "#/" + e.id : "#/exams"; return; }
+    const pick = e && reportAttemptOf(e.id, S.reportAttempt);
+    if (!e || !pick) { location.hash = e ? "#/" + e.id : "#/exams"; return; }
+    const attempt = pick.attempt;
     const items = reportItems(e, attempt);
     const total = items.length;
     const correct = items.filter((x) => x.ok).length;
@@ -996,10 +1412,12 @@
     const need = Math.max(0, Math.ceil((PASS_RATE / 100) * total) - correct);
     const over = attempt.elapsedSeconds > attempt.limitSeconds;
 
-    $("#rTitle").textContent = e.title;
+    $("#rTitle").textContent = pick.count > 1 ? `${e.title} · ${pick.no}회차` : e.title;
     $("#rBack").setAttribute("href", "#/" + e.id);
     $("#rBack").textContent = "← " + e.title;
-    $("#rHero").innerHTML = `
+    const hist = pick.count > 1 ? examHistory(e.id) : [];
+    $("#rHero").innerHTML = `${hist.length ? `<nav class="report-attempts" aria-label="응시 회차">${hist.map((a, i) =>
+        `<a href="#/${e.id}/report/${i + 1}" class="${i + 1 === pick.no ? "on" : ""}"${i + 1 === pick.no ? ' aria-current="page"' : ""}>${i + 1}회차 <b>${a.correct}</b></a>`).join("")}</nav>` : ""}
       <div class="progress-big">
         <div class="pb-num"><b>${correct}</b><span>/ ${total} 정답</span></div>
         <div class="pb-body">
@@ -1063,6 +1481,11 @@
     $("#rList").innerHTML = shown.length ? shown.map(reportCard).join("")
       : `<p class="empty">${S.reportFilter === "wrong" ? "이 조건에서 틀린 문제가 없어요." : "문제가 없어요."}</p>`;
 
+    // Claude 오답노트 내보내기
+    S.reportCtx = { e, pick, attempt, items, total, correct, rate, need, domains,
+      tags: Object.values(tagStat).filter((s) => s.wrong).sort((a, b) => b.wrong - a.wrong || a.tag.localeCompare(b.tag)) };
+    renderExport();
+
     $("#stats").innerHTML = [
       `<span class="chip">${esc(e.title)}</span>`,
       `<span class="chip good">정답 <b>${correct}</b></span>`,
@@ -1117,7 +1540,232 @@
       </details>
     </article>`;
   }
+  /* ---------------- Claude 오답노트용 내보내기 ----------------
+   * 리포트 화면의 결과를 Markdown/JSON 으로 정리해 복사하거나 저장한다.
+   * Claude 대화창에 그대로 붙여넣으면 오답노트를 만들 수 있게 요청 문구도 같이 넣는다.
+   */
+  const EXPORT_KEY = "saa.export";
+  S.exp = (() => {
+    let p = {};
+    try { p = JSON.parse(localStorage.getItem(EXPORT_KEY)) || {}; } catch (_) { p = {}; }
+    return { scope: p.scope === "all" ? "all" : "wrong", lang: p.lang === "both" ? "both" : "cur", prompt: p.prompt !== false };
+  })();
+  const saveExportPref = () => { try { localStorage.setItem(EXPORT_KEY, JSON.stringify(S.exp)); } catch (_) {} };
+  const srcLabel = (q) => {
+    const sid = String(q.id).replace(/-\d+$/, "");
+    const ex = (window.SAA_EXAMS || []).find((x) => x.id === sid);
+    return `${ex ? ex.title : sid} #${q.number}`;
+  };
+  const both = (o) => o && typeof o === "object" ? { en: o.en || "", ko: o.ko || "" } : { en: o || "", ko: o || "" };
+
+  function exportData(c) {
+    const { e, pick, attempt, items } = c;
+    const hist = examHistory(e.id);
+    const prev = hist.slice(0, pick.no - 1);
+    const qs = items.map((x) => {
+      const q = x.q;
+      const dom = MOCK_DOMAINS.find((d) => d.id === x.domain);
+      const prevWrong = prev.map((a, i) => ({ no: i + 1, a }))
+        .filter(({ a }) => a && a.answers && !sameAnswer(q, a.answers[q.id] || []))
+        .map(({ no, a }) => ({ attempt: no, picked: (a.answers[q.id] || []).slice() }));
+      const whyWrong = {};
+      Object.keys(q.why_wrong || {}).forEach((k) => { whyWrong[k] = both(q.why_wrong[k]); });
+      return {
+        pos: x.pos, id: q.id, source: srcLabel(q),
+        domain: dom ? dom.name : x.domain || "", tags: (q.tags || []).slice(),
+        correct: x.ok,
+        myAnswer: x.sel.slice(), correctAnswer: (q.answer || []).slice(),
+        question: both(q.question),
+        options: (q.options || []).map((o) => ({ k: o.k, en: o.en || "", ko: o.ko || "" })),
+        explanation: both(q.explanation),
+        whyWrong,
+        wrongInPreviousAttempts: prevWrong,
+      };
+    });
+    return {
+      exam: { id: e.id, title: e.title, attempt: pick.no, attempts: pick.count },
+      result: {
+        finishedAt: new Date(attempt.finishedAt).toISOString(),
+        elapsedSeconds: attempt.elapsedSeconds, limitSeconds: attempt.limitSeconds,
+        total: c.total, correct: c.correct, wrong: c.total - c.correct, rate: c.rate,
+        passLineRate: PASS_RATE, needForPassLine: c.need,
+      },
+      domains: c.domains.map((d) => ({ name: d.name, weight: d.weight, correct: d.ok, total: d.count, rate: d.rate })),
+      weakTags: c.tags.map((s) => ({ tag: s.tag, wrong: s.wrong, total: s.total })),
+      history: hist.slice(0, pick.no).map((a, i) => ({ attempt: i + 1, correct: a.correct, total: a.total, finishedAt: new Date(a.finishedAt).toISOString() })),
+      questions: qs,
+    };
+  }
+
+  function exportPrompt(scope) {
+    return [
+      "아래는 내가 AWS SAA-C03 모의고사를 풀고 나온 결과야. 이 데이터로 **오답노트**를 만들어줘.",
+      "",
+      "1. **문제별 오답 정리** — 틀린 문제마다",
+      "   - 문제의 핵심 요구사항·키워드 (예: \"가장 비용 효율적\", \"운영 오버헤드 최소\", \"고가용성\", \"실시간\")",
+      "   - 정답이 맞는 이유",
+      "   - 내가 고른 답이 틀린 이유 — 어떤 조건을 놓쳤는지",
+      "   - 헷갈리기 쉬운 서비스·개념 비교 (필요하면 표로)",
+      "   - 한 줄 암기 포인트",
+      "2. **오답 패턴 분석** — 약한 도메인·주제, 반복 오답(⚠ 표시), 문제를 잘못 읽는 습관",
+      "3. **복습 우선순위 Top 5** — 다음 회차 전에 공부할 주제와 찾아볼 AWS 공식 문서 주제",
+      "4. **확인 문제** — 내 약점을 겨냥한 SAA-C03 스타일 변형 문제 5개 (정답·해설은 맨 끝에 모아서)",
+      "",
+      scope === "all" ? "맞힌 문제도 포함돼 있어. 맞혔지만 개념이 흔들려 보이는 문제가 있으면 짧게 짚어줘." : "",
+      "사이트에 적힌 정답·해설이 의심스러우면 근거와 함께 지적해줘.",
+      "",
+      "---",
+      "",
+    ].filter((l, i, a) => !(l === "" && a[i - 1] === "")).join("\n");
+  }
+
+  function exportMarkdown(d, opt) {
+    const lang = opt.lang === "both" ? "both" : S.lang === "ko" ? "ko" : "en";
+    const pickT = (o) => lang === "ko" ? (o.ko || o.en) : (o.en || o.ko);
+    const block = (o) => {
+      if (lang !== "both") return pickT(o);
+      return o.en && o.ko && o.en !== o.ko ? `${o.en}\n\n> (한글) ${o.ko.replace(/\n/g, "\n> ")}` : (o.en || o.ko);
+    };
+    const r = d.result;
+    const L = [];
+    if (opt.prompt) L.push(exportPrompt(opt.scope));
+    L.push(`# AWS SAA-C03 모의고사 결과 — ${d.exam.title}${d.exam.attempts > 1 ? ` (${d.exam.attempt}회차)` : ""}`, "");
+    L.push("## 요약");
+    L.push(`- 점수: **${r.correct} / ${r.total}** (정답률 ${r.rate}%) · 오답 ${r.wrong}`);
+    L.push(`- 합격선(참고 ${r.passLineRate}%): ${r.needForPassLine ? `${r.needForPassLine}문제 부족` : "통과"}`);
+    L.push(`- 소요 시간: ${formatClock(r.elapsedSeconds)} / ${formatClock(r.limitSeconds)}${r.elapsedSeconds > r.limitSeconds ? " (시간 초과)" : ""}`);
+    L.push(`- 응시: ${new Date(r.finishedAt).toLocaleString("ko-KR")}`);
+    if (d.history.length > 1) L.push(`- 회차별 점수: ${d.history.map((h) => `${h.attempt}회차 ${h.correct}/${h.total}`).join(" → ")}`);
+    L.push("", "### 영역별 (SAA-C03 공식 도메인)", "| 영역 | 출제 비중 | 결과 | 정답률 |", "|---|---|---|---|");
+    d.domains.forEach((x) => L.push(`| ${x.name} | ${x.weight}% | ${x.correct} / ${x.total} | ${x.rate}% |`));
+    if (d.weakTags.length) {
+      L.push("", "### 자주 틀린 주제 (틀린 수 / 출제 수)");
+      L.push(d.weakTags.slice(0, 15).map((t) => `${t.tag} ${t.wrong}/${t.total}`).join(" · ") + (d.weakTags.length > 15 ? ` 외 ${d.weakTags.length - 15}개` : ""));
+    }
+    const repeat = d.questions.filter((q) => !q.correct && q.wrongInPreviousAttempts.length);
+    if (repeat.length) {
+      L.push("", "### ⚠ 반복 오답 (이전 회차에도 틀림)");
+      L.push(repeat.map((q) => `Q${q.pos}`).join(", "));
+    }
+    const qText = (q) => {
+      const head = `### Q${q.pos} · ${q.correct ? "✅ 정답" : "❌ 오답"} · ${q.domain}${q.tags.length ? " · " + q.tags.join(", ") : ""}`;
+      const out = [head];
+      if (q.wrongInPreviousAttempts.length) out.push(`⚠ 반복 오답 — ${q.wrongInPreviousAttempts.map((p) => `${p.attempt}회차에 ${p.picked.join(",") || "무응답"}`).join(", ")}`);
+      out.push(`원본: ${q.source}`, "", "**문제**", "", block(q.question), "", "**선택지**", "");
+      q.options.forEach((o) => {
+        const mine = q.myAnswer.includes(o.k), ans = q.correctAnswer.includes(o.k);
+        const mark = ans && mine ? "  ← ✅ 내 선택 · 정답" : ans ? "  ← ✅ 정답" : mine ? "  ← ❌ 내 선택" : "";
+        if (lang === "both" && o.en && o.ko && o.en !== o.ko) out.push(`- **${o.k}.** ${o.en}${mark}`, `  - (한글) ${o.ko}`);
+        else out.push(`- **${o.k}.** ${pickT(o)}${mark}`);
+      });
+      out.push("", `- 내 답: **${q.myAnswer.length ? q.myAnswer.join(", ") : "무응답"}**`, `- 정답: **${q.correctAnswer.join(", ")}**`);
+      if (!q.correct) {
+        const ex = block(q.explanation);
+        if (ex) out.push("", "**사이트 해설**", "", ex);
+        const ww = Object.keys(q.whyWrong).filter((k) => !q.correctAnswer.includes(k));
+        if (ww.length) {
+          out.push("", "**오답 선택지 설명**", "");
+          ww.forEach((k) => out.push(`- **${k}**${q.myAnswer.includes(k) ? " (내 선택)" : ""}: ${pickT(q.whyWrong[k]).replace(/\n+/g, " ")}`));
+        }
+      }
+      return out.join("\n");
+    };
+    const wrongQs = d.questions.filter((q) => !q.correct);
+    L.push("", "---", "", `## 틀린 문제 (${wrongQs.length})`, "");
+    if (!wrongQs.length) L.push("틀린 문제가 없어요.");
+    wrongQs.forEach((q) => L.push(qText(q), ""));
+    if (opt.scope === "all") {
+      const okQs = d.questions.filter((q) => q.correct);
+      L.push("---", "", `## 맞힌 문제 (${okQs.length})`, "");
+      okQs.forEach((q) => L.push(qText(q), ""));
+    }
+    return L.join("\n").replace(/\n{3,}/g, "\n\n").trim() + "\n";
+  }
+
+  function exportPayload(kind) {
+    const c = S.reportCtx;
+    const d = exportData(c);
+    if (S.exp.scope === "wrong") d.questions = d.questions.filter((q) => !q.correct);
+    if (kind === "json") return JSON.stringify(d, null, 2);
+    return exportMarkdown(d, S.exp);
+  }
+  const exportFileName = (ext) => {
+    const c = S.reportCtx;
+    return `saa-c03_${c.e.id}_try${c.pick.no}_${S.exp.scope === "all" ? "all" : "wrong"}.${ext}`;
+  };
+
+  function renderExport() {
+    const c = S.reportCtx; const el = $("#rExport");
+    if (!c || !el) return;
+    const wrong = c.total - c.correct;
+    const n = S.exp.scope === "all" ? c.total : wrong;
+    const size = new Blob([exportPayload("md")]).size;
+    el.innerHTML = `
+      <div class="panel-head"><h3>Claude로 오답노트 만들기</h3><span class="muted">복사해서 Claude 대화창에 붙여넣으면 오답노트를 만들어줘요</span></div>
+      <div class="rx-opts">
+        <div class="seg" role="group" aria-label="포함할 문제">
+          <button type="button" data-xscope="wrong" class="${S.exp.scope === "wrong" ? "on" : ""}">틀린 문제 ${wrong}</button>
+          <button type="button" data-xscope="all" class="${S.exp.scope === "all" ? "on" : ""}">전체 ${c.total}</button>
+        </div>
+        <div class="seg" role="group" aria-label="문제 언어">
+          <button type="button" data-xlang="cur" class="${S.exp.lang === "cur" ? "on" : ""}">${S.lang === "ko" ? "한글만" : "EN만"}</button>
+          <button type="button" data-xlang="both" class="${S.exp.lang === "both" ? "on" : ""}">EN + 한글</button>
+        </div>
+        <label class="rv-check"><input type="checkbox" data-xprompt ${S.exp.prompt ? "checked" : ""}> 오답노트 요청 문구 포함</label>
+      </div>
+      <div class="rx-actions">
+        <button type="button" class="primary" data-xcopy>📋 복사하기</button>
+        <button type="button" data-xdl="md">.md 저장</button>
+        <button type="button" data-xdl="json">.json 저장</button>
+        <span class="rx-status" id="rxStatus" role="status"></span>
+      </div>
+      <p class="rx-meta">문제 ${n}개 · 약 ${Math.max(1, Math.round(size / 1024))}KB — 문제·선택지, 내 답/정답, 사이트 해설, 영역·주제별 통계${c.pick.no > 1 ? ", 이전 회차 반복 오답" : ""} 포함</p>`;
+  }
+
+  async function copyText(s) {
+    try { await navigator.clipboard.writeText(s); return true; } catch (_) {}
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = s; ta.setAttribute("readonly", ""); ta.style.position = "fixed"; ta.style.opacity = "0";
+      document.body.appendChild(ta); ta.select();
+      const ok = document.execCommand("copy"); ta.remove(); return ok;
+    } catch (_) { return false; }
+  }
+  function downloadText(s, name, type) {
+    const url = URL.createObjectURL(new Blob([s], { type }));
+    const a = document.createElement("a");
+    a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+  function exportStatus(msg, bad) {
+    const s = $("#rxStatus"); if (!s) return;
+    s.textContent = msg; s.className = "rx-status" + (bad ? " bad" : " ok");
+    clearTimeout(exportStatus.t); exportStatus.t = setTimeout(() => { s.textContent = ""; }, 4000);
+  }
+  async function handleExportClick(ev) {
+    const sc = ev.target.closest("[data-xscope]");
+    if (sc) { S.exp.scope = sc.dataset.xscope; saveExportPref(); renderExport(); return true; }
+    const lg = ev.target.closest("[data-xlang]");
+    if (lg) { S.exp.lang = lg.dataset.xlang; saveExportPref(); renderExport(); return true; }
+    if (ev.target.closest("[data-xcopy]")) {
+      const ok = await copyText(exportPayload("md"));
+      exportStatus(ok ? "복사했어요. Claude 대화창에 붙여넣으세요." : "복사하지 못했어요. .md 저장을 이용해 주세요.", !ok);
+      return true;
+    }
+    const dl = ev.target.closest("[data-xdl]");
+    if (dl) {
+      const kind = dl.dataset.xdl;
+      downloadText(exportPayload(kind), exportFileName(kind), kind === "json" ? "application/json" : "text/markdown;charset=utf-8");
+      exportStatus("파일을 저장했어요. Claude 대화창에 첨부하세요.");
+      return true;
+    }
+    return false;
+  }
+  $("#report").addEventListener("change", (ev) => {
+    if (ev.target.matches("[data-xprompt]")) { S.exp.prompt = ev.target.checked; saveExportPref(); renderExport(); }
+  });
   $("#report").addEventListener("click", (ev) => {
+    if (ev.target.closest("#rExport")) { handleExportClick(ev); return; }
     const sl = ev.target.closest("a[data-study-link]");
     if (sl) { S.studyReturn = { hash: location.hash, qid: sl.dataset.q, pos: sl.dataset.pos }; return; }
     const f = ev.target.closest("[data-rfilter]");
@@ -1248,7 +1896,7 @@
     $("#examNote").textContent = timed ? "실전 시험 · 제출 후 채점" : isTag ? "푼 문제 모아보기" : isCategory ? "유형별 전체 문제" : (e.note || "");
     $("#examNote").hidden = !$("#examNote").textContent;
     $("#solveBack").setAttribute("href", isExam ? "#/" + e.id : "#/practice");
-    $("#solveBack").textContent = timed ? "← 시험 중단" : isExam ? "← " + e.title : "← 문제 유형";
+    $("#solveBack").textContent = timed ? "← 일시정지하고 나가기" : isExam ? "← " + e.title : "← 문제 유형";
 
     const scoped = scopeQuestions();
     const t = tally(scoped);
@@ -1268,12 +1916,21 @@
       ].join("");
 
     $("#timedExamBar").hidden = !timed;
+    const conflict = timed && S.examSession.conflict;
+    $("#examConflict").hidden = !conflict;
+    if (conflict) {
+      $("#examConflictText").textContent = conflict === "GONE"
+        ? "다른 탭이나 기기에서 이 시험을 제출했거나 처음부터 다시 시작했어요. 이 화면은 저장을 멈췄어요."
+        : "다른 탭이나 기기에서 이 시험을 이어서 풀고 있어요. 덮어쓰지 않도록 이 화면은 저장을 멈췄어요.";
+    }
     if (timed) {
       $("#examAnswered").textContent = `${timedCount} / ${scoped.length} 답변`;
       $("#examFinishHint").textContent = timedCount === scoped.length
         ? "모든 답변이 준비되었습니다."
         : `모든 문제에 답하면 제출할 수 있습니다. ${scoped.length - timedCount}문제 남음`;
-      ensureExamClock();
+      if (conflict) stopExamClock(); else ensureExamClock();
+      // 문제를 옮기면 위치도 저장 (이어 풀 때 그 문제부터)
+      if (!conflict && S.examSession.lastIdx !== S.idx) { S.examSession.lastIdx = S.idx; persistExamSession(); }
     } else stopExamClock();
 
     const tags = [...new Set(scoped.flatMap((q) => q.tags || []))].sort();
@@ -1335,6 +1992,7 @@
     $("#report").hidden = S.view !== "report";
     $("#exam").hidden = S.view !== "solve";
     $("#admin").hidden = S.view !== "admin";
+    $("#review").hidden = S.view !== "review";
     $("#workbook").hidden = S.view !== "workbook";
     $("#workbookDay").hidden = S.view !== "workbookDay";
     $("#controls").hidden = S.view !== "solve" || isTimedExam();
@@ -1347,6 +2005,7 @@
     else if (S.view === "detail") renderDetail();
     else if (S.view === "report") renderReport();
     else if (S.view === "admin") renderAdmin();
+    else if (S.view === "review") renderReview();
     else if (S.view === "workbook") renderWorkbook();
     else if (S.view === "workbookDay") renderWorkbookDay();
     else renderSolve();
@@ -1442,6 +2101,7 @@
   //  #/mock1                   실전 시험 시작 전 화면
   //  #/mock1/exam              메모리에 진행 중인 실전 시험
   //  #/mock1/report            가장 최근 완료한 시험의 결과 리포트
+  //  #/mock1/report/<회차>     그 회차(1 = 첫 응시) 결과 리포트
   //  #/category/<유형>         해당 유형 전체 문제
   //  #/tag/<태그>              푼 문제 중 그 분류만
   //  #/workbook[/day/<번호>]   순서별 학습 워크북
@@ -1451,7 +2111,7 @@
     const parts = h.split("/").filter(Boolean);
     S.filter = "all"; S.tag = ""; S.search = ""; $("#search").value = "";
     const keepsExamSession = !!(S.examSession && parts[0] === S.examSession.examId && parts[1] === "exam");
-    if (S.examSession && !keepsExamSession) discardExamSession();
+    if (S.examSession && !keepsExamSession) suspendExamSession();
 
     if (parts[0] !== "workbook" && !(parts[1] === "report")) S.studyReturn = null;
     if (parts[0] === "workbook") {
@@ -1463,9 +2123,20 @@
       } else S.view = "workbook";
       return;
     }
+    if (parts[0] === "admin" && parts[1] === "review" && parts[2]) {
+      S.scope = null;
+      S.rv = { set: parts[2], pos: /^\d+$/.test(parts[3] || "") ? Number(parts[3]) : 0 };
+      S.view = Store.user && Store.user.isAdmin ? "review" : "home";
+      return;
+    }
     if (parts[0] === "admin") {
       S.scope = null;
       S.view = Store.user && Store.user.isAdmin ? "admin" : "home";
+      return;
+    }
+    if (isAdmin()) {
+      if (parts.length) history.replaceState(null, "", "#/admin");
+      S.scope = null; S.view = "admin";
       return;
     }
     if (parts[0] === "tag" && parts[1]) {
@@ -1482,13 +2153,18 @@
       S.homeMode = "exams";
       S.scope = { type: "exam", id: parts[0] };
       if (parts[1] === "report") {
-        if (latestAttempt(parts[0])) { S.view = "report"; return; }
+        if (latestAttempt(parts[0])) {
+          const n = /^\d+$/.test(parts[2] || "") ? Number(parts[2]) : 0;
+          S.reportAttempt = n;
+          S.view = "report"; return;
+        }
         history.replaceState(null, "", "#/" + parts[0]);
         S.view = "detail"; return;
       }
       if (parts[1] === "exam" && keepsExamSession) {
         S.view = "solve";
         rebuild(false);
+        if (S.resumeIdx !== null) { S.idx = Math.min(Math.max(0, S.resumeIdx), Math.max(0, S.work.length - 1)); S.resumeIdx = null; }
         S.restart = false;
       } else {
         if (parts[1] === "exam") history.replaceState(null, "", "#/" + parts[0]);
@@ -1502,13 +2178,7 @@
   let acceptedHash = location.hash || "#/";
   addEventListener("hashchange", () => {
     const nextHash = location.hash || "#/";
-    if (isLeavingTimedExam(nextHash)) {
-      if (!confirmExamExit()) {
-        history.replaceState(null, "", acceptedHash);
-        return;
-      }
-      discardExamSession();
-    }
+    if (isLeavingTimedExam(nextHash)) suspendExamSession();
     acceptedHash = nextHash;
     [...$("#filterSeg").children].forEach((x) => x.classList.toggle("on", x.dataset.filter === "all"));
     readHash();
@@ -1520,22 +2190,50 @@
     const link = e.target.closest('a[href^="#/"]');
     if (!link || !isLeavingTimedExam(link.hash)) return;
     e.preventDefault();
-    if (!confirmExamExit()) return;
-    discardExamSession();
+    suspendExamSession();
     acceptedHash = link.hash;
     location.hash = link.hash;
   }, true);
-  addEventListener("beforeunload", (e) => {
-    if (!isTimedExam()) return;
-    e.preventDefault();
-    e.returnValue = EXAM_EXIT_MESSAGE;
-    return EXAM_EXIT_MESSAGE;
+  // 창을 닫거나 새로고침해도 진행 상황 유지
+  addEventListener("pagehide", () => { if (isTimedExam()) persistExamSession(); Store.flushState(); });
+  document.addEventListener("visibilitychange", async () => {
+    if (document.hidden) { if (isTimedExam()) persistExamSession(); Store.flushState(); return; }
+    // 돌아오면 다른 기기에서 바뀐 내용 반영 (시험 중에는 화면을 건드리지 않는다)
+    // 시험 화면으로 돌아오면 바로 한 번 저장해 본다 → 다른 곳이 주인이면 즉시 멈춤 표시
+    if (isTimedExam()) { if (!S.examSession.conflict) { S.examSession.lastPersist = Date.now(); Store.savePauseNow(S.examSession.examId, pauseEntry()); } return; }
+    if (!Store.user) return;
+    try { if (await Store.refreshState()) { applyAccountState(); render(); } } catch (_) {}
   });
   $("#dActions").addEventListener("click", (e) => {
+    const resume = e.target.closest("button[data-resume-exam]");
+    if (resume) { resumeTimedExam(resume.dataset.resumeExam); return; }
     const button = e.target.closest("button[data-start-exam]");
     if (button) startTimedExam(button.dataset.startExam);
   });
   $("#finishExam").addEventListener("click", finishTimedExam);
+  $("#pauseExam").addEventListener("click", pauseTimedExam);
+  // 충돌: 최신 상태(서버)로 다시 불러오기
+  $("#conflictReload").addEventListener("click", async () => {
+    if (!S.examSession) return;
+    const id = S.examSession.examId;
+    discardExamSession();
+    try { await Store.refreshState(); } catch (_) {}
+    applyAccountState();
+    acceptedHash = "#/" + id;
+    location.hash = "#/" + id;
+  });
+  // 충돌: 이 화면 기준으로 계속 (다른 곳의 진행은 이 화면 내용으로 바뀐다)
+  $("#conflictTakeover").addEventListener("click", () => {
+    const s = S.examSession;
+    if (!s || !s.conflict) return;
+    if (!confirm("다른 곳에서 진행한 내용은 이 화면 기준으로 덮어써져요. 여기서 계속 풀까요?")) return;
+    s.conflict = null;
+    s.sid = newSid();
+    s.takeover = true;
+    s.resumedAt = Date.now();
+    persistExamSession();
+    renderSolve();
+  });
 
   /* ---------------- interactions ---------------- */
   $("#list").addEventListener("click", async (e) => {
@@ -1553,7 +2251,8 @@
       const next = need === 1
         ? (cur[0] === k ? [] : [k])
         : (cur.includes(k) ? cur.filter((x) => x !== k) : cur.concat(k).slice(-need));
-      if (timed) S.examSession.answers[q.id] = next;
+      if (timed && S.examSession.conflict) return;
+      if (timed) { S.examSession.answers[q.id] = next; persistExamSession(); }
       else S.sel[q.id] = next;
       renderSolve();
     } else if (act === "submit") {
@@ -1592,7 +2291,7 @@
     const pick = e.target.closest("button[data-study-pick]");
     const submit = e.target.closest("button[data-study-submit]");
     const button = pick || submit;
-    if (!button) return;
+    if (!button || isAdmin()) return;
     const day = STUDY_DAYS[S.workbookDay - 1];
     const question = byId(button.dataset.studyQuestion);
     const lessonIndex = Number(button.dataset.studyLesson);
@@ -1726,11 +2425,13 @@
   $("#authClose").addEventListener("click", () => dlg.close());
   $("#authBtn").addEventListener("click", async () => {
     if (Store.user) {
-      const message = isTimedExam() ? EXAM_EXIT_MESSAGE : Store.user.nickname + " 님, 로그아웃할까요?";
+      const message = Store.user.nickname + " 님, 로그아웃할까요?" + (isTimedExam() ? "\n진행 중인 시험은 일시정지 상태로 저장됩니다." : "");
       if (confirm(message)) {
-        await Store.signOut(); S.board = null; S.adm = null; S.admPerson = null; syncAuthUI();
-        if (S.view === "admin") { location.hash = "#/"; return; }
-        if (isTimedExam()) { discardExamSession(); location.hash = "#/exams"; return; }
+        const pausedExamId = isTimedExam() ? S.examSession.examId : null;
+        if (pausedExamId) suspendExamSession();
+        await Store.signOut(); applyAccountState(); S.board = null; S.adm = null; S.admPerson = null; syncAuthUI();
+        if (S.view === "admin" || S.view === "review") { location.hash = "#/"; return; }
+        if (pausedExamId) { acceptedHash = "#/exams"; location.hash = "#/exams"; return; }
         if (S.view === "solve") rebuild(true);
         render();
       }
@@ -1744,8 +2445,10 @@
     try {
       await (kind === "up" ? Store.signUp(nick, pin) : Store.signIn(nick, pin));
       dlg.close(); $("#pin").value = "";
+      applyAccountState();
       S.board = null; S.adm = null; syncAuthUI();
       if (S.view === "solve") rebuild(true);
+      if (isAdmin() || (location.hash || "").startsWith("#/admin")) readHash();
       render();
     } catch (e2) { err.hidden = false; err.textContent = e2.message || String(e2); }
   }
@@ -1757,7 +2460,10 @@
     const b = $("#authBtn");
     if (Store.user) { b.textContent = Store.user.nickname; b.className = "ghost"; }
     else { b.textContent = "로그인"; b.className = "primary"; }
-    $("#adminBtn").hidden = !(Store.user && Store.user.isAdmin);
+    $("#adminBtn").hidden = true; // 관리자는 상단 탭이 "관리자"로 바뀐다
+    const qt = $("#quizTab");
+    qt.textContent = isAdmin() ? "관리자" : "문제 풀이";
+    qt.setAttribute("href", isAdmin() ? "#/admin" : "#/practice");
     const n = $("#notice");
     if (Store.mode === "local") {
       n.hidden = false;
@@ -1773,6 +2479,7 @@
   (async function init() {
     [...$("#langSeg").children].forEach((x) => x.classList.toggle("on", x.dataset.lang === S.lang));
     try { await Store.restore(); } catch (e) { console.warn(e); }
+    applyAccountState();
     syncAuthUI();
     readHash();
     [...$("#filterSeg").children].forEach((x) => x.classList.toggle("on", x.dataset.filter === S.filter));

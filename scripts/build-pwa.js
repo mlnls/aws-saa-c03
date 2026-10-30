@@ -4,7 +4,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const root = path.resolve(__dirname, '..');
 const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
-const urls = new Set(['./index.html', './toeic.html', './coding.html', './assets/toeic.css?v=20260915-1', './assets/toeic.js?v=20260915-1', './assets/coding.css?v=20260915-2', './assets/coding.js?v=20260915-2', './manifest.webmanifest', './data/study-details.js?v=20260929-2']);
+const urls = new Set(['./index.html', './toeic.html', './coding.html', './assets/toeic.css?v=20260915-1', './assets/toeic.js?v=20260915-1', './assets/coding.css?v=20260915-2', './assets/coding.js?v=20260915-2', './manifest.webmanifest', './data/study-details.js?v=20260929-2', './cards.html', './assets/cards.css?v=20261020-2', './assets/cards.js?v=20261020-2', './data/flashcards.js?v=20261020-2', './wrong.html', './assets/wrong.css?v=20261023-1', './assets/wrong.js?v=20261023-1', './data/wrong-notes.js?v=20261023-1']);
 for (const match of html.matchAll(/(?:src|href)="((?:assets|data)\/[^"#]+)"/g)) urls.add('./' + match[1]);
 const manifest = JSON.parse(fs.readFileSync(path.join(root, 'manifest.webmanifest'), 'utf8'));
 manifest.icons.forEach(icon => urls.add('./' + icon.src));

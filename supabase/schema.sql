@@ -54,6 +54,26 @@ create table if not exists public.saa_exam_results (
 alter table public.saa_users    enable row level security;
 alter table public.saa_attempts enable row level security;
 alter table public.saa_exam_results enable row level security;
+
+-- 실전 시험 응시 이력: 응시 1회 = 1행 (다시 응시해도 이전 결과 유지). 관리자는 첫 응시만 본다.
+create table if not exists public.saa_exam_attempts (
+  id              uuid primary key default gen_random_uuid(),
+  user_id         uuid not null references public.saa_users(id) on delete cascade,
+  exam_id         text not null,
+  started_at      timestamptz not null,
+  finished_at     timestamptz not null,
+  elapsed_seconds integer not null,
+  limit_seconds   integer not null,
+  total           integer not null,
+  correct         integer not null,
+  answers         jsonb not null default '{}'::jsonb,
+  created_at      timestamptz not null default now()
+);
+-- 같은 제출을 여러 기기/재시도로 올려도 1행 (finished_at 은 클라이언트 ms 값 그대로)
+create unique index if not exists saa_exam_attempts_once on public.saa_exam_attempts (user_id, exam_id, finished_at);
+alter table public.saa_exam_attempts enable row level security;
+revoke all on public.saa_exam_attempts from anon, authenticated;
+
 revoke all on public.saa_users, public.saa_attempts, public.saa_exam_results from anon, authenticated;
 
 -- 가입 / 로그인은 실패를 예외로 던지지 않고 {"error": "..."} 를 반환한다.
@@ -119,10 +139,11 @@ $$;
 create or replace function public.saa_save(
   p_token uuid, p_qid text, p_choice text[], p_correct boolean, p_bookmarked boolean)
 returns void language plpgsql security definer set search_path = public as $$
-declare uid uuid;
+declare uid uuid; adm boolean;
 begin
-  select id into uid from public.saa_users where token = p_token;
+  select id, is_admin into uid, adm from public.saa_users where token = p_token;
   if uid is null then raise exception 'BAD_TOKEN'; end if;
+  if adm then raise exception 'ADMIN_READONLY'; end if;
   insert into public.saa_attempts (user_id, qid, choice, correct, bookmarked, updated_at)
   values (uid, p_qid, p_choice, p_correct, p_bookmarked, now())
   on conflict (user_id, qid) do update
@@ -131,11 +152,16 @@ begin
 end $$;
 
 -- 내가 완료한 실전 시험의 최신 결과
-create or replace function public.saa_exam_results(p_token uuid)
-returns setof public.saa_exam_results language sql security definer set search_path = public as $$
-  select r.* from public.saa_exam_results r
-  join public.saa_users u on u.id = r.user_id
-  where u.token = p_token;
+drop function if exists public.saa_exam_results(uuid);
+create function public.saa_exam_results(p_token uuid)
+returns table (id uuid, exam_id text, started_at timestamptz, finished_at timestamptz, elapsed_seconds integer,
+               limit_seconds integer, total integer, correct integer, answers jsonb)
+language sql security definer set search_path = public as $$
+  select a.id, a.exam_id, a.started_at, a.finished_at, a.elapsed_seconds, a.limit_seconds, a.total, a.correct, a.answers
+  from public.saa_exam_attempts a
+  join public.saa_users u on u.id = a.user_id
+  where u.token = p_token
+  order by a.exam_id, a.finished_at;
 $$;
 
 -- 실전 시험 결과 저장. 전 문항 제출을 마친 뒤 클라이언트가 한 번만 호출한다.
@@ -143,25 +169,108 @@ create or replace function public.saa_save_exam_result(
   p_token uuid, p_exam_id text, p_started_at timestamptz, p_finished_at timestamptz,
   p_elapsed_seconds integer, p_limit_seconds integer, p_total integer, p_correct integer, p_answers jsonb)
 returns void language plpgsql security definer set search_path = public as $$
+declare uid uuid; adm boolean;
+begin
+  select id, is_admin into uid, adm from public.saa_users where token = p_token;
+  if uid is null then raise exception 'BAD_TOKEN'; end if;
+  if adm then raise exception 'ADMIN_READONLY'; end if;
+  if p_exam_id !~ '^[A-Za-z0-9_-]{1,40}$' then raise exception 'BAD_KEY'; end if;
+  if length(coalesce(p_answers, '{}'::jsonb)::text) > 65536 then raise exception 'TOO_BIG'; end if;
+  insert into public.saa_exam_attempts
+    (user_id, exam_id, started_at, finished_at, elapsed_seconds, limit_seconds, total, correct, answers)
+  values
+    (uid, p_exam_id, p_started_at, p_finished_at, p_elapsed_seconds, p_limit_seconds, p_total, p_correct,
+     coalesce(p_answers, '{}'::jsonb))
+  on conflict (user_id, exam_id, finished_at) do nothing;
+end $$;
+
+-- 계정에 묶인 학습 상태 (일시정지한 실전 시험, 워크북 읽음 체크·복습 문제 답 등)
+-- key 하나당 jsonb 1행. 클라이언트가 key 단위로 통째로 덮어쓴다.
+create table if not exists public.saa_user_state (
+  user_id    uuid not null references public.saa_users(id) on delete cascade,
+  key        text not null,
+  value      jsonb not null,
+  updated_at timestamptz not null default now(),
+  primary key (user_id, key)
+);
+alter table public.saa_user_state enable row level security;
+revoke all on public.saa_user_state from anon, authenticated;
+
+-- 내 상태 전체
+create or replace function public.saa_state(p_token uuid)
+returns table (key text, value jsonb, updated_at timestamptz)
+language plpgsql security definer set search_path = public as $$
 declare uid uuid;
 begin
   select id into uid from public.saa_users where token = p_token;
   if uid is null then raise exception 'BAD_TOKEN'; end if;
-  insert into public.saa_exam_results
-    (user_id, exam_id, started_at, finished_at, elapsed_seconds, limit_seconds, total, correct, answers)
-  values
-    (uid, p_exam_id, p_started_at, p_finished_at, p_elapsed_seconds, p_limit_seconds, p_total, p_correct, p_answers)
-  on conflict (user_id, exam_id) do update
-    set started_at = excluded.started_at, finished_at = excluded.finished_at,
-        elapsed_seconds = excluded.elapsed_seconds, limit_seconds = excluded.limit_seconds,
-        total = excluded.total, correct = excluded.correct, answers = excluded.answers;
+  return query select s.key, s.value, s.updated_at from public.saa_user_state s where s.user_id = uid;
+end $$;
+
+-- 상태 하나 저장 (p_value 가 null 이면 삭제). 값은 256KB 까지.
+create or replace function public.saa_set_state(p_token uuid, p_key text, p_value jsonb)
+returns void language plpgsql security definer set search_path = public as $$
+declare uid uuid;
+begin
+  select id into uid from public.saa_users where token = p_token;
+  if uid is null then raise exception 'BAD_TOKEN'; end if;
+  if p_key !~ '^[a-z0-9._-]{1,64}$' then raise exception 'BAD_KEY'; end if;
+  if p_value is null or p_value = 'null'::jsonb then
+    delete from public.saa_user_state where user_id = uid and key = p_key;
+    return;
+  end if;
+  if length(p_value::text) > 262144 then raise exception 'TOO_BIG'; end if;
+  insert into public.saa_user_state (user_id, key, value, updated_at)
+  values (uid, p_key, p_value, now())
+  on conflict (user_id, key) do update set value = excluded.value, updated_at = now();
+end $$;
+
+-- 일시정지한 실전 시험 저장 (exam.paused 맵의 시험 하나만 원자적으로 갱신).
+-- 각 풀이 화면은 sid 를 갖는다. p_takeover=false 면 서버의 sid 가 같을 때만 저장하고,
+-- 다른 곳에서 이어 풀었으면 'TAKEN', 제출·삭제됐으면 'GONE' 을 돌려준다 (오래된 화면이 덮어쓰지 못하게).
+create or replace function public.saa_save_pause(p_token uuid, p_exam text, p_entry jsonb, p_takeover boolean)
+returns text language plpgsql security definer set search_path = public as $$
+declare uid uuid; cur jsonb; old jsonb;
+begin
+  select id into uid from public.saa_users where token = p_token;
+  if uid is null then raise exception 'BAD_TOKEN'; end if;
+  if p_exam !~ '^[A-Za-z0-9_-]{1,40}$' then raise exception 'BAD_KEY'; end if;
+  if p_entry is null or jsonb_typeof(p_entry) <> 'object' then raise exception 'BAD_VALUE'; end if;
+  if length(p_entry::text) > 65536 then raise exception 'TOO_BIG'; end if;
+  select value into cur from public.saa_user_state where user_id = uid and key = 'exam.paused' for update;
+  old := cur -> p_exam;
+  if not coalesce(p_takeover, false) then
+    if old is null then return 'GONE'; end if;
+    if (old->>'sid') is distinct from (p_entry->>'sid') then return 'TAKEN'; end if;
+  end if;
+  insert into public.saa_user_state (user_id, key, value, updated_at)
+  values (uid, 'exam.paused', jsonb_build_object(p_exam, p_entry), now())
+  on conflict (user_id, key) do update
+    set value = public.saa_user_state.value || jsonb_build_object(p_exam, p_entry), updated_at = now();
+  return 'OK';
+end $$;
+
+-- 일시정지 삭제 (제출·처음부터 다시). p_sid 를 주면 그 화면 것일 때만 지운다.
+create or replace function public.saa_clear_pause(p_token uuid, p_exam text, p_sid text)
+returns text language plpgsql security definer set search_path = public as $$
+declare uid uuid; old jsonb;
+begin
+  select id into uid from public.saa_users where token = p_token;
+  if uid is null then raise exception 'BAD_TOKEN'; end if;
+  select value -> p_exam into old from public.saa_user_state where user_id = uid and key = 'exam.paused' for update;
+  if old is null then return 'OK'; end if;
+  if p_sid is not null and (old->>'sid') is distinct from p_sid then return 'TAKEN'; end if;
+  update public.saa_user_state set value = value - p_exam, updated_at = now()
+   where user_id = uid and key = 'exam.paused';
+  delete from public.saa_user_state where user_id = uid and key = 'exam.paused' and value = '{}'::jsonb;
+  return 'OK';
 end $$;
 
 -- 같이 푸는 사람들 현황: 닉네임 × 세트별 푼 개수·정답 수.
 -- qid 가 "exam1-12" 형태이므로 첫 '-' 앞부분을 세트 id 로 사용한다.
 -- (세트 id 에는 '-' 를 쓰지 마세요.)  PIN·토큰은 절대 노출되지 않는다.
 drop function if exists public.saa_board();
-create function public.saa_board()
+create or replace function public.saa_board()
 returns table (nickname text, exam text, solved bigint, correct bigint)
 language sql security definer set search_path = public as $$
   select u.nickname,
@@ -170,6 +279,7 @@ language sql security definer set search_path = public as $$
          count(*) filter (where a.correct) as correct
   from public.saa_users u
   join public.saa_attempts a on a.user_id = u.id
+  where not u.is_admin
   group by u.nickname, split_part(a.qid, '-', 1)
   order by 1, 2;
 $$;
@@ -183,6 +293,8 @@ begin
   if uid is null then raise exception 'BAD_TOKEN'; end if;
   delete from public.saa_attempts where user_id = uid;
   delete from public.saa_exam_results where user_id = uid;
+  delete from public.saa_exam_attempts where user_id = uid;
+  delete from public.saa_user_state where user_id = uid;
 end $$;
 
 -- 계정 삭제 (기록까지 함께 삭제, PIN 재확인)
@@ -204,7 +316,8 @@ language sql security definer set search_path = public as $$
   select u.nickname, a.qid, a.choice, a.correct, a.bookmarked, a.updated_at
   from public.saa_attempts a
   join public.saa_users u on u.id = a.user_id
-  where exists (select 1 from public.saa_users me where me.token = p_token and me.is_admin)
+  where not u.is_admin
+    and exists (select 1 from public.saa_users me where me.token = p_token and me.is_admin)
   order by u.nickname, a.qid;
 $$;
 
@@ -214,10 +327,32 @@ returns table (nickname text, created_at timestamptz, is_admin boolean)
 language sql security definer set search_path = public as $$
   select u.nickname, u.created_at, u.is_admin
   from public.saa_users u
-  where exists (select 1 from public.saa_users me where me.token = p_token and me.is_admin)
+  where not u.is_admin
+    and exists (select 1 from public.saa_users me where me.token = p_token and me.is_admin)
   order by u.created_at;
 $$;
 
+create or replace function public.saa_admin_exams(p_token uuid)
+returns table (nickname text, exam_id text, status text, answers jsonb, correct integer, total integer, at timestamptz)
+language sql security definer set search_path = public as $$
+  with me as (select 1 from public.saa_users where token = p_token and is_admin),
+  firsts as (
+    select distinct on (a.user_id, a.exam_id) a.*
+    from public.saa_exam_attempts a
+    order by a.user_id, a.exam_id, a.finished_at
+  )
+  select u.nickname, r.exam_id, 'done'::text, r.answers, r.correct, r.total, r.finished_at
+  from firsts r join public.saa_users u on u.id = r.user_id
+  where not u.is_admin and exists (select 1 from me)
+  union all
+  select u.nickname, p.key, 'paused'::text, coalesce(p.value -> 'answers', '{}'::jsonb), null::integer, null::integer,
+         to_timestamp(nullif(p.value ->> 'pausedAt', '')::double precision / 1000)
+  from public.saa_user_state s
+  join public.saa_users u on u.id = s.user_id
+  cross join lateral jsonb_each(case when jsonb_typeof(s.value) = 'object' then s.value else '{}'::jsonb end) p
+  where s.key = 'exam.paused' and not u.is_admin and exists (select 1 from me) and jsonb_typeof(p.value) = 'object'
+    and not exists (select 1 from public.saa_exam_attempts a where a.user_id = s.user_id and a.exam_id = p.key);
+$$;
 grant execute on function
   public.saa_signup(text, text),
   public.saa_login(text, text),
@@ -226,11 +361,16 @@ grant execute on function
   public.saa_save(uuid, text, text[], boolean, boolean),
   public.saa_exam_results(uuid),
   public.saa_save_exam_result(uuid, text, timestamptz, timestamptz, integer, integer, integer, integer, jsonb),
+  public.saa_state(uuid),
+  public.saa_set_state(uuid, text, jsonb),
+  public.saa_save_pause(uuid, text, jsonb, boolean),
+  public.saa_clear_pause(uuid, text, text),
   public.saa_reset(uuid),
   public.saa_delete_me(uuid, text),
   public.saa_board(),
   public.saa_admin_rows(uuid),
-  public.saa_admin_users(uuid)
+  public.saa_admin_users(uuid),
+  public.saa_admin_exams(uuid)
 to anon, authenticated;
 
 -- ⚠️ 관리자 지정
