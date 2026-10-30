@@ -621,6 +621,9 @@ kbd{font:11px/1 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--pan
 .wrongrow{display:grid;grid-template-columns:110px 110px 90px 1fr;gap:10px;align-items:center;
   padding:8px 6px;border-top:1px solid var(--line);font-size:13px;color:var(--ink-2)}
 .wrongrow:first-child{border-top:none}
+.adm-sub{font-size:13.5px;margin:16px 0 6px;display:flex;gap:8px;align-items:baseline}
+.adm-sub:first-child{margin-top:0}
+.adm-midterm-ctl{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px}
 .wr-q{font-weight:700;color:var(--ink)}
 .wr-tags{display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end}
 

@@ -7,18 +7,27 @@
   const QUESTION_BY_ID = new Map(ALL.map((question) => [question.id, question]));
   const byId = (id) => QUESTION_BY_ID.get(id);
   const MOCK_DOMAINS = window.SAA_MOCK_DOMAINS || [];
+  // 다 같이 한 번만 푸는 시험: 완료 후 재응시 불가, 완료 전에는 유형별 연습에서도 문제를 숨긴다.
+  const ONE_SHOT_EXAMS = { mock7: { title: "중간 평가", note: "다 같이 응시 · 1회만" } };
   const EXAMS = (window.SAA_MOCK_EXAMS || []).map((exam) => {
     const entries = (exam.questions || []).filter((item) => byId(item.id));
+    const oneShot = ONE_SHOT_EXAMS[exam.id];
     return {
       id: exam.id,
-      title: exam.title,
-      note: exam.note || "",
+      title: oneShot ? oneShot.title : exam.title,
+      note: oneShot ? oneShot.note : (exam.note || ""),
+      oneShot: !!oneShot,
       entries,
       questions: entries.map((item) => byId(item.id)),
       domainByQuestion: Object.fromEntries(entries.map((item) => [item.id, item.domain])),
     };
   });
   const examOf = (id) => EXAMS.find((e) => e.id === id);
+  // 아직 응시하지 않은 1회용 시험의 문제는 연습에서 미리 볼 수 없게 한다.
+  const hiddenFromPractice = (qid) => {
+    const a = MOCK_ASSIGNMENT[qid], e = a && examOf(a.examId);
+    return !!(e && e.oneShot && !latestAttempt(e.id));
+  };
   const sourceExamOf = (id) => SOURCE_EXAMS.find((e) => e.id === id);
   const MOCK_ASSIGNMENT = (() => {
     const map = {};
@@ -49,6 +58,7 @@
     workbookDay: 1,
     homeMode: "practice",        // practice | exams
     examSession: null,            // 완료 전에는 메모리에만 유지
+    midtermPoll: null,            // 잠긴 중간 평가 화면의 재확인 타이머
     examTimerId: null,
     reportFilter: "wrong",        // wrong | all
     reportTag: "",
@@ -677,9 +687,23 @@
       ? `<span>최근 완료 ${new Date(attempt.finishedAt).toLocaleString("ko-KR")}</span><span class="dot">·</span><span>소요 ${formatClock(attempt.elapsedSeconds)}</span><span class="dot">·</span><span>정답 ${attempt.correct}</span><span class="dot">·</span><span class="warn-t">오답 ${attempt.total - attempt.correct}</span><span class="dot">·</span><span>정답률 ${pct}%</span>`
       : `<span>아직 완료한 시험이 없어요. 중간에 나간 시험은 여기에 기록되지 않습니다.</span>`;
 
+    // 1회용 시험은 관리자가 열기 전까지 잠겨 있다. 기다리는 동안 10초마다 다시 확인한다.
+    clearTimeout(S.midtermPoll);
+    let locked = false;
+    if (e.oneShot && !attempt) {
+      locked = !(await Store.loadMidterm()).open;
+      if (S.view !== "detail" || !S.scope || S.scope.id !== e.id) return;
+      if (locked) S.midtermPoll = setTimeout(() => { if (S.view === "detail" && S.scope && S.scope.id === e.id) renderDetail(); }, 10000);
+    }
+
     $("#dActions").innerHTML = `${attempt ? `<a class="btn primary" href="#/${e.id}/report">결과 리포트 · 틀린 문제 보기</a>` : ""}
-      <button class="btn ${attempt ? "" : "primary"}" type="button" data-start-exam="${e.id}">${attempt ? "다시 응시" : "실전 시험 시작"}</button>
-      <span class="exam-start-copy">${total}문제 · 제한 시간 ${minutes}분 · 시간 초과 후에도 계속 풀이 가능</span>
+      ${e.oneShot && attempt
+        ? `<span class="exam-start-copy">${esc(e.title)}는 한 번만 응시할 수 있어요. 다시 풀 수 없습니다.</span>`
+        : locked
+        ? `<button class="btn" type="button" disabled>🔒 아직 시작 전</button>
+      <span class="exam-start-copy">관리자가 시작하면 열립니다. 이 화면을 열어 두면 자동으로 확인해요. · <b>한 번만 응시 가능</b></span>`
+        : `<button class="btn ${attempt ? "" : "primary"}" type="button" data-start-exam="${e.id}">${attempt ? "다시 응시" : "실전 시험 시작"}</button>
+      <span class="exam-start-copy">${total}문제 · 제한 시간 ${minutes}분 · 시간 초과 후에도 계속 풀이 가능${e.oneShot ? " · <b>한 번만 응시 가능</b>" : ""}</span>`}
       ${domainMixHtml(e, attempt)}
       <p class="exam-detail-format">단일 선택 ${total - multiCount(e)}문항 · 복수 선택 ${multiCount(e)}문항 · 50개 채점 문항과 15개 비채점 문항을 실제 시험에서는 구분할 수 없습니다.</p>`;
 
@@ -737,9 +761,14 @@
     if (!S.adm) {
       $("#admUsers").innerHTML = `<tr><td>불러오는 중…</td></tr>`;
       try {
-        const [rows, users] = await Promise.all([Store.adminRows(), Store.adminUsers()]);
-        S.adm = { rows: rows || [], users: users || [] };
-      } catch (e) { S.adm = { rows: [], users: [], error: e.message || String(e) }; }
+        const [rows, users, exams] = await Promise.all([
+          Store.adminRows(), Store.adminUsers(),
+          // 스키마를 아직 다시 실행하지 않았으면 시험 결과만 비운 채로 보여준다.
+          Store.adminExamResults().catch(() => []),
+        ]);
+        S.adm = { rows: rows || [], users: users || [], exams: exams || [] };
+        await Store.loadMidterm();
+      } catch (e) { S.adm = { rows: [], users: [], exams: [], error: e.message || String(e) }; }
       if (S.view !== "admin") return;
     }
     const rows = S.adm.rows, people = {};
@@ -776,22 +805,65 @@
           </tr>`;
         }).join("") : `<tr><td>아직 기록이 없어요.</td></tr>`);
 
-    // 선택한 사람의 오답 목록
+    // 1회용 시험(중간 평가) 결과표
+    const examRows = S.adm.exams || [];
+    const midterm = EXAMS.find((e) => e.oneShot);
+    const mw = $("#admMidtermWrap");
+    if (midterm) {
+      const done = {};
+      examRows.filter((r) => r.exam_id === midterm.id).forEach((r) => { done[r.nickname] = r; });
+      const order = list.map((p) => p.nickname)
+        .sort((a, b) => (done[b] ? Number(done[b].correct) : -1) - (done[a] ? Number(done[a].correct) : -1) || a.localeCompare(b));
+      $("#admMidtermTitle").textContent = `${midterm.title} 결과 · 응시 ${Object.keys(done).length} / ${order.length}명`;
+      const st = Store.midterm;
+      $("#admMidtermCtl").innerHTML = st.open
+        ? `<span class="badge ok">열림${st.opened_at ? " · " + new Date(st.opened_at).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }) : ""}</span>
+           <button class="btn" type="button" data-midterm="close">다시 잠그기</button>`
+        : `<span class="badge">🔒 잠김</span>
+           <button class="btn primary" type="button" data-midterm="open">${esc(midterm.title)} 시작 (잠금 풀기)</button>`;
+      $("#admMidterm").innerHTML = order.length ? order.map((n) => {
+        const r = done[n];
+        const link = `<a href="#" class="linky" data-person="${esc(n)}">${esc(n)}</a>`;
+        if (!r) return `<tr><td>${link}</td><td class="muted" colspan="4">미응시</td></tr>`;
+        const total = Number(r.total), ok = Number(r.correct);
+        return `<tr${S.admPerson === n ? ' class="me"' : ""}>
+          <td>${link}</td>
+          <td>${ok} / ${total}</td>
+          <td>정답률 ${total ? Math.round((ok / total) * 100) : 0}%</td>
+          <td>소요 ${formatClock(Number(r.elapsed_seconds))}</td>
+          <td class="muted">${r.finished_at ? new Date(r.finished_at).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }) : ""}</td>
+        </tr>`;
+      }).join("") : `<tr><td>아직 기록이 없어요.</td></tr>`;
+      mw.hidden = false;
+    } else mw.hidden = true;
+
+    // 선택한 사람의 오답노트: 실전 시험별 틀린 문제 + 연습에서 틀린 문제
     const pw = $("#admPersonWrap");
     if (S.admPerson) {
-      const mine = rows.filter((r) => r.nickname === S.admPerson && r.correct === false);
-      $("#admPersonTitle").textContent = S.admPerson + " 님이 틀린 문제 " + mine.length + "개";
-      $("#admPerson").innerHTML = mine.length ? `<div class="wrongrows">` + mine.map((r) => {
-        const q = byId(r.qid);
-        const assignment = q && MOCK_ASSIGNMENT[q.id];
-        const ex = assignment && examOf(assignment.examId);
-        return `<div class="wrongrow">
-          <span class="wr-q">${q ? (ex ? esc(ex.title) + " #" + assignment.position : "원본 #" + q.number) : esc(r.qid)}</span>
-          <span class="wr-pick"><b class="bad-t">${(r.choice || []).join(", ") || "-"}</b> 선택</span>
+      const wrongRow = (label, choice, q, fallback) => `<div class="wrongrow">
+          <span class="wr-q">${q ? label : esc(fallback)}</span>
+          <span class="wr-pick"><b class="bad-t">${(choice || []).join(", ") || "-"}</b> 선택</span>
           <span class="wr-ans">정답 <b class="ok-t">${q ? q.answer.join(", ") : "?"}</b></span>
           <span class="wr-tags">${q ? (q.tags || []).slice(0, 3).map((t) => `<span class="badge">${esc(t)}</span>`).join("") : ""}</span>
         </div>`;
-      }).join("") + `</div>` : `<p class="muted">틀린 문제가 없어요.</p>`;
+      const examSections = EXAMS.map((e) => {
+        const r = examRows.find((x) => x.nickname === S.admPerson && x.exam_id === e.id);
+        if (!r) return "";
+        const items = reportItems(e, { answers: r.answers || {} }).filter((x) => !x.ok);
+        return `<h4 class="adm-sub">${esc(e.title)} <span class="muted">${Number(r.correct)} / ${Number(r.total)} · 오답 ${items.length}</span></h4>` +
+          (items.length ? `<div class="wrongrows">${items.map((x) => wrongRow(esc(e.title) + " #" + x.pos, x.sel, x.q)).join("")}</div>`
+            : `<p class="muted">틀린 문제가 없어요.</p>`);
+      }).join("");
+      const mine = rows.filter((r) => r.nickname === S.admPerson && r.correct === false);
+      const practice = `<h4 class="adm-sub">유형별 연습 <span class="muted">오답 ${mine.length}</span></h4>` +
+        (mine.length ? `<div class="wrongrows">${mine.map((r) => {
+          const q = byId(r.qid);
+          const assignment = q && MOCK_ASSIGNMENT[q.id];
+          const ex = assignment && examOf(assignment.examId);
+          return wrongRow(q ? (ex ? esc(ex.title) + " #" + assignment.position : "원본 #" + q.number) : "", r.choice, q, r.qid);
+        }).join("")}</div>` : `<p class="muted">틀린 문제가 없어요.</p>`);
+      $("#admPersonTitle").textContent = S.admPerson + " 님 오답노트";
+      $("#admPerson").innerHTML = (examSections || `<p class="muted">완료한 실전 시험이 없어요.</p>`) + practice;
       pw.hidden = false;
     } else pw.hidden = true;
 
@@ -834,11 +906,24 @@
     }).join("") : `<p class="muted">${S.admScope === "wrong" ? "아직 틀린 문제가 없어요." : "아직 푼 문제가 없어요."}</p>`;
   }
 
-  $("#admUsers").addEventListener("click", (e) => {
+  const pickPerson = (e) => {
     const a = e.target.closest("a[data-person]");
     if (!a) return;
     e.preventDefault();
     S.admPerson = S.admPerson === a.dataset.person ? null : a.dataset.person;
+    renderAdmin();
+    if (S.admPerson) $("#admPersonWrap").scrollIntoView({ block: "start", behavior: "smooth" });
+  };
+  $("#admUsers").addEventListener("click", pickPerson);
+  $("#admMidterm").addEventListener("click", pickPerson);
+  $("#admMidtermCtl").addEventListener("click", async (e) => {
+    const b = e.target.closest("button[data-midterm]");
+    if (!b) return;
+    const open = b.dataset.midterm === "open";
+    const title = (EXAMS.find((x) => x.oneShot) || {}).title || "중간 평가";
+    if (!confirm(open ? `${title}를 지금 시작할까요?\n모든 사람이 바로 응시할 수 있게 됩니다.` : `${title}를 다시 잠글까요?\n이미 풀고 있는 사람은 그대로 제출할 수 있어요.`)) return;
+    b.disabled = true;
+    try { await Store.setMidterm(open); } catch (err) { alert("변경하지 못했어요: " + (err.message || err)); }
     renderAdmin();
   });
   $("#admScope").addEventListener("click", (e) => {
@@ -854,7 +939,7 @@
     if (S.scope.type === "tag") return ALL.filter((q) => (q.tags || []).includes(S.scope.tag) && answered(q.id));
     if (S.scope.type === "category") {
       const group = categoryOf(S.scope.id);
-      return group ? ALL.filter((q) => inCategory(q, group)) : [];
+      return group ? ALL.filter((q) => inCategory(q, group) && !hiddenFromPractice(q.id)) : [];
     }
     const e = examOf(S.scope.id);
     return e ? e.questions : [];
@@ -926,10 +1011,12 @@
   function confirmExamExit() {
     return !isTimedExam() || confirm(EXAM_EXIT_MESSAGE);
   }
-  function startTimedExam(examId) {
+  async function startTimedExam(examId) {
     const e = examOf(examId);
     if (!e) return;
     if (!Store.user) { openAuth("실전 시험 완료 기록을 저장하려면 먼저 로그인해 주세요."); return; }
+    if (e.oneShot && latestAttempt(examId)) { alert(e.title + "는 한 번만 응시할 수 있어요."); return; }
+    if (e.oneShot && !(await Store.loadMidterm()).open) { alert(e.title + "는 아직 시작 전이에요. 관리자가 열면 시작할 수 있어요."); renderDetail(); return; }
     stopExamClock();
     S.examSession = {
       examId,

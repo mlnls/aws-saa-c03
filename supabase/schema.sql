@@ -49,12 +49,20 @@ create table if not exists public.saa_exam_results (
   primary key (user_id, exam_id)
 );
 
+-- 사이트 설정 (예: key='midterm' → {"open": true, "opened_at": ...})
+create table if not exists public.saa_settings (
+  key        text primary key,
+  value      jsonb not null default '{}'::jsonb,
+  updated_at timestamptz not null default now()
+);
+
 -- RLS 켜고 정책은 만들지 않음 → 공개 키(anon)로는 테이블 직접 접근 불가.
 -- 모든 접근은 아래 security definer 함수를 통해서만 가능하다.
 alter table public.saa_users    enable row level security;
 alter table public.saa_attempts enable row level security;
 alter table public.saa_exam_results enable row level security;
-revoke all on public.saa_users, public.saa_attempts, public.saa_exam_results from anon, authenticated;
+alter table public.saa_settings enable row level security;
+revoke all on public.saa_users, public.saa_attempts, public.saa_exam_results, public.saa_settings from anon, authenticated;
 
 -- 가입 / 로그인은 실패를 예외로 던지지 않고 {"error": "..."} 를 반환한다.
 -- (예외를 던지면 트랜잭션이 롤백되어 PIN 실패 카운터가 저장되지 않기 때문)
@@ -131,6 +139,8 @@ begin
 end $$;
 
 -- 내가 완료한 실전 시험의 최신 결과
+-- 예전에 다른 반환 타입으로 만들어진 함수가 있으면 create or replace 가 실패하므로 먼저 지운다.
+drop function if exists public.saa_exam_results(uuid);
 create or replace function public.saa_exam_results(p_token uuid)
 returns setof public.saa_exam_results language sql security definer set search_path = public as $$
   select r.* from public.saa_exam_results r
@@ -154,7 +164,9 @@ begin
   on conflict (user_id, exam_id) do update
     set started_at = excluded.started_at, finished_at = excluded.finished_at,
         elapsed_seconds = excluded.elapsed_seconds, limit_seconds = excluded.limit_seconds,
-        total = excluded.total, correct = excluded.correct, answers = excluded.answers;
+        total = excluded.total, correct = excluded.correct, answers = excluded.answers
+    -- 중간 평가(mock7)는 한 번만 응시: 첫 결과를 덮어쓰지 않는다.
+    where public.saa_exam_results.exam_id <> 'mock7';
 end $$;
 
 -- 같이 푸는 사람들 현황: 닉네임 × 세트별 푼 개수·정답 수.
@@ -218,6 +230,39 @@ language sql security definer set search_path = public as $$
   order by u.created_at;
 $$;
 
+-- 관리자 전용: 모든 사람의 실전 시험 결과 (오답노트 확인용, answers 에 문항별 선택이 들어 있다)
+create or replace function public.saa_admin_exam_results(p_token uuid)
+returns table (nickname text, exam_id text, finished_at timestamptz, elapsed_seconds integer,
+               limit_seconds integer, total integer, correct integer, answers jsonb)
+language sql security definer set search_path = public as $$
+  select u.nickname, r.exam_id, r.finished_at, r.elapsed_seconds, r.limit_seconds, r.total, r.correct, r.answers
+  from public.saa_exam_results r
+  join public.saa_users u on u.id = r.user_id
+  where exists (select 1 from public.saa_users me where me.token = p_token and me.is_admin)
+  order by u.nickname, r.exam_id;
+$$;
+
+-- 중간 평가 잠금 상태 (누구나 조회). 관리자가 열기 전까지 open = false.
+create or replace function public.saa_midterm_state()
+returns json language sql security definer set search_path = public as $$
+  select json_build_object(
+    'open', coalesce((select (value->>'open')::boolean from public.saa_settings where key = 'midterm'), false),
+    'opened_at', (select value->>'opened_at' from public.saa_settings where key = 'midterm'));
+$$;
+
+-- 관리자 전용: 중간 평가 열기 / 다시 잠그기
+create or replace function public.saa_admin_set_midterm(p_token uuid, p_open boolean)
+returns json language plpgsql security definer set search_path = public as $$
+begin
+  if not exists (select 1 from public.saa_users where token = p_token and is_admin) then
+    raise exception 'NOT_ADMIN';
+  end if;
+  insert into public.saa_settings (key, value, updated_at)
+  values ('midterm', json_build_object('open', p_open, 'opened_at', case when p_open then now() end)::jsonb, now())
+  on conflict (key) do update set value = excluded.value, updated_at = now();
+  return public.saa_midterm_state();
+end $$;
+
 grant execute on function
   public.saa_signup(text, text),
   public.saa_login(text, text),
@@ -230,7 +275,10 @@ grant execute on function
   public.saa_delete_me(uuid, text),
   public.saa_board(),
   public.saa_admin_rows(uuid),
-  public.saa_admin_users(uuid)
+  public.saa_admin_users(uuid),
+  public.saa_admin_exam_results(uuid),
+  public.saa_midterm_state(),
+  public.saa_admin_set_midterm(uuid, boolean)
 to anon, authenticated;
 
 -- ⚠️ 관리자 지정
